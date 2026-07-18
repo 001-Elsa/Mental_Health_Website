@@ -1,0 +1,42 @@
+[2m17:14:25[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/analytics/mood-trend?days=14&scope=all[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m17:14:26[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/analytics/mood-trend?days=14&scope=all[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m17:14:30[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/analytics/mood-trend?days=14&scope=mine[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m17:14:31[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/analytics/mood-trend?days=14&scope=mine[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m17:14:32[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/analytics/mood-trend?days=14&scope=all[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m17:14:33[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/analytics/mood-trend?days=14&scope=all[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m17:14:39[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/analytics/mood-trend?days=14&scope=mine[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m17:14:40[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/consult/conversations[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m17:14:40[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/consult/history/conv-1784277394455-tsauo8[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m17:14:40[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/users/me/profile[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m17:14:41[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/consult/conversations[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m17:14:41[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/consult/history/conv-1784277394455-tsauo8[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m17:14:41[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/users/me/profile[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m18:18:08[22m [31m[1m[vite][22m[39m [31mws proxy socket error:[39m
+Error: read ECONNRESET
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)

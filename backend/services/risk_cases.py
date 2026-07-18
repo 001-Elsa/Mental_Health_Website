@@ -1,0 +1,161 @@
+from datetime import datetime, timedelta
+
+from sqlalchemy.orm import Session
+
+from backend.services.risk_engine import RiskAssessment
+from database.models import Consultation, RiskAction, RiskEvent, UserNotification
+
+OPEN_STATUSES = {"pending", "assigned", "contacted", "follow_up"}
+TRANSITIONS = {
+    "pending": {"assigned", "contacted", "resolved", "false_positive"},
+    "assigned": {"contacted", "resolved", "false_positive"},
+    "contacted": {"follow_up", "resolved", "false_positive"},
+    "follow_up": {"contacted", "resolved", "false_positive"},
+}
+RISK_RANK = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+
+
+class InvalidRiskTransition(Exception):
+    pass
+
+
+class RiskVersionConflict(Exception):
+    pass
+
+
+def due_at_for_level(level: str, now: datetime | None = None) -> datetime:
+    current = now or datetime.utcnow()
+    if level == "critical":
+        return current + timedelta(minutes=15)
+    if level == "high":
+        return current + timedelta(hours=2)
+    return current + timedelta(hours=24)
+
+
+def create_or_escalate_case(
+    db: Session,
+    *,
+    user_id: int,
+    consultation: Consultation,
+    assessment: RiskAssessment,
+    excerpt: str,
+    event_type: str = "conversation",
+    model_review: tuple[str, str] | None = None,
+) -> RiskEvent:
+    event = db.query(RiskEvent).filter(
+        RiskEvent.user_id == user_id,
+        RiskEvent.event_type == event_type,
+        RiskEvent.status.in_(OPEN_STATUSES),
+        RiskEvent.consultation_id == consultation.id,
+    ).order_by(RiskEvent.created_at.desc()).first()
+    if event:
+        previous_level = event.level
+        event.score = max(event.score, assessment.score)
+        if RISK_RANK[assessment.level] > RISK_RANK.get(event.level, 0):
+            event.level = assessment.level
+            event.due_at = min(filter(None, [event.due_at, due_at_for_level(assessment.level)]))
+        event.signals = assessment.reason
+        event.excerpt = excerpt[:300]
+        if model_review:
+            event.model_level, event.model_reason = model_review
+        event.version += 1
+        db.add(RiskAction(
+            risk_event_id=event.id,
+            action="escalated" if previous_level != event.level else "signal_updated",
+            from_status=event.status,
+            to_status=event.status,
+            note=assessment.reason[:512],
+        ))
+        return event
+
+    event = RiskEvent(
+        user_id=user_id,
+        consultation_id=consultation.id,
+        conversation_id=consultation.conversation_id,
+        event_type=event_type,
+        level=assessment.level,
+        score=assessment.score,
+        signals=assessment.reason,
+        excerpt=excerpt[:300],
+        model_level=model_review[0] if model_review else "",
+        model_reason=model_review[1] if model_review else "",
+        due_at=due_at_for_level(assessment.level),
+    )
+    db.add(event)
+    db.flush()
+    db.add(RiskAction(
+        risk_event_id=event.id,
+        action="created",
+        from_status="",
+        to_status="pending",
+        note=assessment.reason[:512],
+    ))
+    return event
+
+
+def transition_case(
+    db: Session,
+    *,
+    event: RiskEvent,
+    actor_id: int,
+    to_status: str,
+    expected_version: int,
+    note: str = "",
+    assignee_id: int | None = None,
+    next_follow_up_at: datetime | None = None,
+) -> RiskEvent:
+    if event.version != expected_version:
+        raise RiskVersionConflict
+    if to_status not in TRANSITIONS.get(event.status, set()):
+        raise InvalidRiskTransition(f"{event.status} -> {to_status}")
+    if to_status == "follow_up" and (not next_follow_up_at or next_follow_up_at <= datetime.utcnow()):
+        raise InvalidRiskTransition("follow_up requires a future next_follow_up_at")
+
+    now = datetime.utcnow()
+    updates: dict = {"status": to_status, "version": expected_version + 1}
+    if to_status == "assigned":
+        updates["assigned_to"] = assignee_id or actor_id
+    elif event.assigned_to is None:
+        updates["assigned_to"] = actor_id
+    if to_status == "follow_up":
+        updates["next_follow_up_at"] = next_follow_up_at
+    if to_status in {"resolved", "false_positive"}:
+        updates.update({
+            "handled_by": actor_id,
+            "handled_note": note,
+            "handled_at": now,
+            "next_follow_up_at": None,
+        })
+
+    changed = db.query(RiskEvent).filter(
+        RiskEvent.id == event.id,
+        RiskEvent.version == expected_version,
+    ).update(updates, synchronize_session=False)
+    if changed != 1:
+        db.rollback()
+        raise RiskVersionConflict
+    db.add(RiskAction(
+        risk_event_id=event.id,
+        actor_id=actor_id,
+        action=to_status,
+        from_status=event.status,
+        to_status=to_status,
+        note=note,
+    ))
+    if to_status in {"contacted", "follow_up", "resolved"}:
+        messages = {
+            "contacted": ("支持进展已更新", "平台支持人员已开始跟进。紧急情况下请优先联系现实中的可信任人员或拨打 120 / 110。"),
+            "follow_up": ("后续支持已安排", "平台已记录后续关注时间，你仍可以继续记录状态或联系学校心理中心。"),
+            "resolved": ("本次支持记录已完成", "本次支持记录已完成。如再次需要支持，可以继续使用 AI 倾听或预约学校心理中心。"),
+        }
+        title, content = messages[to_status]
+        db.add(UserNotification(
+            user_id=event.user_id,
+            notification_type="risk_support",
+            title=title,
+            content=content,
+            link="/dashboard",
+        ))
+    db.flush()
+    db.expire_all()
+    return db.query(RiskEvent).filter(RiskEvent.id == event.id).first()
