@@ -31,12 +31,12 @@ def search(
 
 
 @router.post("/ask")
-def ask(
+async def ask(
     payload: KnowledgeAsk,
     db: Session = Depends(get_sync_db),
     current_user: User | None = Depends(get_optional_user),
 ):
-    answer, chunks, personalization = answer_with_knowledge(
+    answer, chunks, personalization = await answer_with_knowledge(
         db,
         payload.question.strip(),
         user_id=current_user.id if current_user else None,

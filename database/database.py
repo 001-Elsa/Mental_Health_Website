@@ -1,4 +1,5 @@
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from backend.core.config import get_settings
@@ -13,6 +14,30 @@ sync_engine = create_engine(
 )
 
 SyncSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=sync_engine)
+
+
+def _async_database_url(url: str) -> str:
+    if url.startswith("sqlite+aiosqlite:"):
+        return url
+    if url.startswith("sqlite:"):
+        return url.replace("sqlite:", "sqlite+aiosqlite:", 1)
+    if url.startswith("postgresql+psycopg2:"):
+        return url.replace("postgresql+psycopg2:", "postgresql+asyncpg:", 1)
+    if url.startswith("postgresql:"):
+        return url.replace("postgresql:", "postgresql+asyncpg:", 1)
+    return url
+
+
+async_engine = create_async_engine(
+    _async_database_url(SQLALCHEMY_DATABASE_URL),
+    pool_pre_ping=True,
+)
+AsyncSessionLocal = async_sessionmaker(
+    bind=async_engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+    autoflush=False,
+)
 
 
 class Base(DeclarativeBase):
@@ -89,3 +114,8 @@ def get_sync_db():
         yield db
     finally:
         db.close()
+
+
+async def get_async_db():
+    async with AsyncSessionLocal() as db:
+        yield db

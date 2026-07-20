@@ -4,10 +4,12 @@ from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from backend.core.config import get_settings
-from database.database import get_sync_db
+from database.database import get_async_db, get_sync_db
 from database.models import User
 
 ALGORITHM = "HS256"
@@ -57,6 +59,22 @@ def get_current_user(
     user = db.query(User).filter(User.id == int(user_id)).first()
     if not user:
         raise HTTPException(status_code=401, detail="用户不存在")
+    return user
+
+
+async def get_current_user_async(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
+    db: AsyncSession = Depends(get_async_db),
+) -> User:
+    if not credentials:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    payload = decode_access_token(credentials.credentials)
+    user_id = payload.get("user_id") if payload else None
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid authentication token")
+    user = (await db.execute(select(User).where(User.id == int(user_id)))).scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
     return user
 
 

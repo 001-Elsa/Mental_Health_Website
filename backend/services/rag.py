@@ -143,7 +143,7 @@ def retrieve_conversation_context(
     return own_chunks + public_chunks
 
 
-def answer_with_knowledge(
+async def answer_with_knowledge(
     db: Session,
     question: str,
     *,
@@ -151,7 +151,7 @@ def answer_with_knowledge(
 ) -> tuple[str, list[RetrievedChunk], dict[str, int]]:
     assessment = assess_risk(question)
     if assessment.requires_intervention:
-        return ai_client.chat([], question, assessment), [], {"own_history": 0, "public_conversations": 0}
+        return await ai_client.chat([], question, assessment), [], {"own_history": 0, "public_conversations": 0}
 
     knowledge_chunks = retrieve(db, question)
     conversation_chunks = retrieve_conversation_context(db, question, user_id=user_id)
@@ -191,4 +191,4 @@ def answer_with_knowledge(
         "回答要先共情，再给2到4个具体可执行步骤，最后说明何时应联系学校心理中心或专业机构。\n\n"
         f"当前问题：{question}\n\n审核资料：\n{knowledge_context}\n\n倾听上下文：\n{conversation_context}"
     )
-    return ai_client.chat([], prompt), knowledge_chunks, personalization
+    return await ai_client.chat([], prompt), knowledge_chunks, personalization

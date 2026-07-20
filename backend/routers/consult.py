@@ -1,11 +1,15 @@
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+import json
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import func as sa_func, or_
+from fastapi.responses import StreamingResponse
+from sqlalchemy import func as sa_func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session, aliased
 
-from backend.auth import get_current_user
+from backend.auth import get_current_user, get_current_user_async
 from backend.services.ai_client import ai_client
 from backend.services.cache import cache_service
 from backend.services.conversation_memory import compress_history
@@ -13,7 +17,7 @@ from backend.services.idempotency import IdempotencyInProgress, begin_operation,
 from backend.services.risk_engine import RiskAssessment, assess_risk, infer_emotion
 from backend.services.risk_cases import create_or_escalate_case
 from backend.services.user_profile import recommend_exercises, update_user_profile
-from database.database import get_sync_db
+from database.database import AsyncSessionLocal, get_async_db, get_sync_db
 from database.models import ChatMessage, Consultation, MoodLog, User, UserProfile
 
 router = APIRouter(prefix="/api/consult", tags=["AI咨询"])
@@ -40,7 +44,7 @@ def _support_actions(level: str) -> list[str]:
 
 
 @router.post("/chat")
-def chat(
+async def chat(
     payload: ChatReq,
     db: Session = Depends(get_sync_db),
     current_user: User = Depends(get_current_user),
@@ -88,7 +92,7 @@ def chat(
     )
     mood_scores = list(reversed([float(row[0]) for row in mood_rows]))
     assessment = assess_risk(message, mood_scores)
-    model_review = ai_client.review_risk(message) if assessment.level == "medium" else None
+    model_review = await ai_client.review_risk(message) if assessment.level == "medium" else None
     risk_rank = {"low": 0, "medium": 1, "high": 2, "critical": 3}
     if model_review and risk_rank[model_review[0]] > risk_rank[assessment.level]:
         model_level, model_reason = model_review
@@ -110,7 +114,7 @@ def chat(
         history = [{"role": "system", "content": f"用户支持画像：{profile.summary}"}, *history]
     if consult.memory_summary:
         history = [{"role": "system", "content": f"此前对话摘要：{consult.memory_summary}"}, *history[-10:]]
-    reply = ai_client.chat(history, message, assessment)
+    reply = await ai_client.chat(history, message, assessment)
 
     if not existing_consult:
         db.add(consult)
@@ -181,6 +185,143 @@ def chat(
     if idempotency_record:
         complete_operation(db, idempotency_record, response)
     return response
+
+
+def _sse(event: str, data: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _persist_streamed_chat_sync(
+    db: Session,
+    *,
+    user_id: int,
+    payload: dict,
+    message: str,
+    reply: str,
+    assessment: RiskAssessment,
+    model_review: tuple[str, str] | None,
+) -> None:
+    """Synchronous ORM unit invoked through AsyncSession.run_sync."""
+    consult = db.query(Consultation).filter(
+            Consultation.conversation_id == payload["conversation_id"],
+            Consultation.user_id == user_id,
+        ).first()
+    if not consult:
+        consult = Consultation(
+                user_id=user_id,
+                conversation_id=payload["conversation_id"],
+                title=message[:50],
+                visibility=payload["visibility"],
+            )
+        db.add(consult)
+        db.flush()
+    history_rows = db.query(ChatMessage).filter(
+            ChatMessage.conversation_id == payload["conversation_id"]
+        ).order_by(ChatMessage.created_at.asc(), ChatMessage.id.asc()).all()
+    rank = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+    consult.emotion_tag = infer_emotion(message)
+    consult.last_message_at = datetime.utcnow()
+    consult.risk_score = max(consult.risk_score or 0, assessment.score)
+    if rank[assessment.level] >= rank.get(consult.risk_level, 0):
+        consult.risk_level = assessment.level
+        consult.risk_reason = assessment.reason
+    if assessment.requires_intervention:
+        consult.intervention_status = "pending"
+        create_or_escalate_case(
+            db, user_id=user_id, consultation=consult, assessment=assessment,
+            excerpt=message, model_review=model_review,
+        )
+    db.add(ChatMessage(conversation_id=payload["conversation_id"], role="user", content=message))
+    db.add(ChatMessage(conversation_id=payload["conversation_id"], role="assistant", content=reply))
+    complete_history = [
+        *[{"role": row.role, "content": row.content} for row in history_rows],
+        {"role": "user", "content": message},
+        {"role": "assistant", "content": reply},
+    ]
+    consult.summary = compress_history(complete_history, max_chars=260)
+    consult.message_count = len(history_rows) + 2
+    if len(complete_history) >= 12:
+        consult.memory_summary = compress_history(complete_history[:-6])
+    user_messages = [item["content"] for item in complete_history if item["role"] == "user"]
+    update_user_profile(db, user_id, user_messages)
+
+
+async def _persist_streamed_chat(**kwargs) -> None:
+    async with AsyncSessionLocal() as db:
+        await db.run_sync(lambda sync_db: _persist_streamed_chat_sync(sync_db, **kwargs))
+        await db.commit()
+    cache_service.delete(f"analytics:overview:user:{kwargs['user_id']}")
+
+
+@router.post("/chat/stream")
+async def stream_chat(
+    payload: ChatReq,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: User = Depends(get_current_user_async),
+):
+    """Stream tokens as SSE and persist the completed answer in a background task."""
+    if cache_service.increment(f"rate_limit:ai:{current_user.id}", 60) > 20:
+        raise HTTPException(status_code=429, detail="发送过于频繁，请稍后再试")
+    message = payload.message.strip()
+    existing = (await db.execute(select(Consultation).where(
+        Consultation.conversation_id == payload.conversation_id
+    ))).scalar_one_or_none()
+    if existing and existing.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="该会话不属于当前用户")
+    history_rows = (await db.execute(select(ChatMessage).where(
+        ChatMessage.conversation_id == payload.conversation_id
+    ).order_by(ChatMessage.created_at.asc(), ChatMessage.id.asc()))).scalars().all()
+    mood_rows = (await db.execute(select(MoodLog.score).where(
+        MoodLog.user_id == current_user.id
+    ).order_by(MoodLog.created_at.desc()).limit(5))).all()
+    assessment = assess_risk(message, list(reversed([float(row[0]) for row in mood_rows])))
+    model_review = await ai_client.review_risk(message) if assessment.level == "medium" else None
+    history = [{"role": row.role, "content": row.content} for row in history_rows]
+    profile = (await db.execute(select(UserProfile).where(
+        UserProfile.user_id == current_user.id
+    ))).scalar_one_or_none()
+    if profile and profile.summary:
+        history = [{"role": "system", "content": f"用户支持画像：{profile.summary}"}, *history]
+    if existing and existing.memory_summary:
+        history = [{"role": "system", "content": f"此前对话摘要：{existing.memory_summary}"}, *history[-10:]]
+    user_id = current_user.id
+    payload_data = payload.model_dump()
+
+    async def events():
+        chunks: list[str] = []
+        yield _sse("meta", {
+            "request_id": getattr(request.state, "request_id", ""),
+            "risk": {"level": assessment.level, "score": assessment.score},
+        })
+        try:
+            async for chunk in ai_client.stream_chat(history, message, assessment):
+                if await request.is_disconnected():
+                    return
+                chunks.append(chunk)
+                yield _sse("token", {"content": chunk})
+        except Exception:
+            yield _sse("error", {"detail": "AI 流式响应中断，请稍后重试"})
+            return
+        reply = "".join(chunks)
+        background_tasks.add_task(
+            _persist_streamed_chat,
+            user_id=user_id,
+            payload=payload_data,
+            message=message,
+            reply=reply,
+            assessment=assessment,
+            model_review=model_review,
+        )
+        yield _sse("done", {"message_count": len(history_rows) + 2})
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        background=background_tasks,
+    )
 
 
 @router.get("/conversations")
