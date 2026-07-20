@@ -1,12 +1,13 @@
 from datetime import datetime, timedelta
+from uuid import uuid4
 from typing import Annotated
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
+from sqlalchemy.orm import Session
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session
 
 from backend.core.config import get_settings
 from database.database import get_async_db, get_sync_db
@@ -35,8 +36,21 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
     expire = datetime.utcnow() + (
         expires_delta or timedelta(minutes=settings.access_token_expire_minutes)
     )
-    to_encode.update({"exp": expire})
+    to_encode.update({"exp": expire, "type": "access", "jti": uuid4().hex})
     return jwt.encode(to_encode, settings.secret_key, algorithm=ALGORITHM)
+
+
+def create_refresh_token(*, user_id: int, token_version: int) -> tuple[str, datetime]:
+    settings = get_settings()
+    expires_at = datetime.utcnow() + timedelta(days=settings.refresh_token_expire_days)
+    payload = {
+        "user_id": user_id,
+        "ver": token_version,
+        "type": "refresh",
+        "jti": uuid4().hex,
+        "exp": expires_at,
+    }
+    return jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM), expires_at
 
 
 def decode_access_token(token: str) -> dict | None:
@@ -53,11 +67,11 @@ def get_current_user(
     if not credentials:
         raise HTTPException(status_code=401, detail="请先登录")
     payload = decode_access_token(credentials.credentials)
-    user_id = payload.get("user_id") if payload else None
+    user_id = payload.get("user_id") if payload and payload.get("type") == "access" else None
     if not user_id:
         raise HTTPException(status_code=401, detail="登录状态已失效")
     user = db.query(User).filter(User.id == int(user_id)).first()
-    if not user:
+    if not user or int(payload.get("ver", -1)) != user.token_version:
         raise HTTPException(status_code=401, detail="用户不存在")
     return user
 
@@ -67,14 +81,14 @@ async def get_current_user_async(
     db: AsyncSession = Depends(get_async_db),
 ) -> User:
     if not credentials:
-        raise HTTPException(status_code=401, detail="Authentication required")
+        raise HTTPException(status_code=401, detail="请先登录")
     payload = decode_access_token(credentials.credentials)
-    user_id = payload.get("user_id") if payload else None
+    user_id = payload.get("user_id") if payload and payload.get("type") == "access" else None
     if not user_id:
-        raise HTTPException(status_code=401, detail="Invalid authentication token")
+        raise HTTPException(status_code=401, detail="登录状态已失效")
     user = (await db.execute(select(User).where(User.id == int(user_id)))).scalar_one_or_none()
-    if not user:
-        raise HTTPException(status_code=401, detail="User not found")
+    if not user or int(payload.get("ver", -1)) != user.token_version:
+        raise HTTPException(status_code=401, detail="用户不存在")
     return user
 
 
@@ -85,10 +99,13 @@ def get_optional_user(
     if not credentials:
         return None
     payload = decode_access_token(credentials.credentials)
-    user_id = payload.get("user_id") if payload else None
+    user_id = payload.get("user_id") if payload and payload.get("type") == "access" else None
     if not user_id:
         return None
-    return db.query(User).filter(User.id == int(user_id)).first()
+    user = db.query(User).filter(User.id == int(user_id)).first()
+    if not user or int(payload.get("ver", -1)) != user.token_version:
+        return None
+    return user
 
 
 def require_admin(current_user: User = Depends(get_current_user)) -> User:

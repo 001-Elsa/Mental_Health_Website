@@ -18,4 +18,8 @@ def login_user(db: Session, *, nickname: str, password: str) -> tuple[User, str]
     user = users.get_by_nickname(db, nickname)
     if not user or not verify_password(password, user.password_hash):
         return None
-    return user, create_access_token({"user_id": user.id, "nickname": user.nickname})
+    return user, create_access_token({
+        "user_id": user.id,
+        "nickname": user.nickname,
+        "ver": user.token_version,
+    })

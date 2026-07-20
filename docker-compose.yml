@@ -35,6 +35,8 @@ services:
       APP_ENV: production
       DATABASE_URL: postgresql+psycopg2://mental:mental@postgres:5432/mental_health
       REDIS_URL: redis://redis:6379/0
+      ACCESS_TOKEN_EXPIRE_MINUTES: 15
+      REFRESH_TOKEN_EXPIRE_DAYS: 30
     depends_on:
       postgres:
         condition: service_healthy

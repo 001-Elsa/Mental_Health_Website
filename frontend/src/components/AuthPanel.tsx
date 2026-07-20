@@ -31,7 +31,7 @@ export default function AuthPanel() {
   const login = useMutation({
     mutationFn: authApi.login,
     onSuccess: (data) => {
-      setAuth(data.token, data.user);
+      setAuth(data.token, data.user, data.refresh_token);
       setMode(null);
     },
   });

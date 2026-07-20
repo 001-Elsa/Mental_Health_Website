@@ -59,6 +59,7 @@ def _upgrade_legacy_sqlite() -> None:
             "background_url": "VARCHAR(512) NOT NULL DEFAULT ''",
             "signature": "VARCHAR(120) NOT NULL DEFAULT ''",
             "updated_at": "DATETIME NULL",
+            "token_version": "INTEGER NOT NULL DEFAULT 0",
         },
         "consultations": {
             "memory_summary": "TEXT NOT NULL DEFAULT ''",

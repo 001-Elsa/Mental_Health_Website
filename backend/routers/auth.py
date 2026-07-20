@@ -1,8 +1,10 @@
 import json
+import hashlib
 import random
 import re
 import urllib.error
 import urllib.request
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
@@ -12,6 +14,8 @@ from backend.repositories import users
 from backend.core.config import get_settings
 from backend.services.cache import cache_service
 from backend.services.auth_service import register_user, login_user
+from backend.auth import create_access_token, create_refresh_token, decode_access_token
+from database.models import RefreshToken, User
 
 router = APIRouter(prefix="/api/auth", tags=["用户认证"])
 
@@ -32,6 +36,20 @@ class LoginReq(BaseModel):
     nickname: str = Field(min_length=2, max_length=20)
     password: str = Field(min_length=6, max_length=72)
     remember_me: bool = False
+
+
+class RefreshReq(BaseModel):
+    refresh_token: str = Field(min_length=32, max_length=4096)
+
+
+def _token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _issue_refresh_token(db: Session, user: User) -> str:
+    token, expires_at = create_refresh_token(user_id=user.id, token_version=user.token_version)
+    db.add(RefreshToken(user_id=user.id, token_hash=_token_hash(token), expires_at=expires_at))
+    return token
 
 
 # ====== API ======
@@ -128,15 +146,24 @@ def register(payload: RegisterReq, db: Session = Depends(get_sync_db)):
 
 @router.post("/login")
 def login(payload: LoginReq, db: Session = Depends(get_sync_db)):
-    """登录"""
+    rate_key = f"rate_limit:login_fail:{payload.nickname.strip().lower()}"
+    if int(cache_service.get(rate_key) or 0) >= 5:
+        raise HTTPException(status_code=429, detail="登录失败次数过多，请 15 分钟后再试")
     result = login_user(db, nickname=payload.nickname, password=payload.password)
     if not result:
+        cache_service.increment(rate_key, 15 * 60)
         raise HTTPException(status_code=401, detail="昵称或密码错误")
     user, token = result
+    cache_service.delete(rate_key)
+    refresh_token = _issue_refresh_token(db, user)
+    db.commit()
 
     return {
         "ok": True,
         "token": token,
+        "access_token": token,
+        "refresh_token": refresh_token,
+        "expires_in": get_settings().access_token_expire_minutes * 60,
         "user": {
             "id": user.id,
             "nickname": user.nickname,
@@ -149,3 +176,41 @@ def login(payload: LoginReq, db: Session = Depends(get_sync_db)):
             "created_at": user.created_at,
         },
     }
+
+
+@router.post("/refresh")
+def refresh_tokens(payload: RefreshReq, db: Session = Depends(get_sync_db)):
+    claims = decode_access_token(payload.refresh_token)
+    if not claims or claims.get("type") != "refresh":
+        raise HTTPException(status_code=401, detail="刷新令牌无效")
+    record = db.query(RefreshToken).filter(
+        RefreshToken.token_hash == _token_hash(payload.refresh_token)
+    ).first()
+    if not record or record.revoked_at or record.expires_at <= datetime.utcnow():
+        raise HTTPException(status_code=401, detail="刷新令牌已失效或被撤销")
+    user = db.query(User).filter(User.id == int(claims.get("user_id", 0))).first()
+    if not user or int(claims.get("ver", -1)) != user.token_version or user.id != record.user_id:
+        raise HTTPException(status_code=401, detail="刷新令牌已失效")
+    new_refresh = _issue_refresh_token(db, user)
+    record.revoked_at = datetime.utcnow()
+    record.replaced_by_hash = _token_hash(new_refresh)
+    access = create_access_token({"user_id": user.id, "nickname": user.nickname, "ver": user.token_version})
+    db.commit()
+    return {
+        "token": access,
+        "access_token": access,
+        "refresh_token": new_refresh,
+        "expires_in": get_settings().access_token_expire_minutes * 60,
+    }
+
+
+@router.post("/logout")
+def logout(payload: RefreshReq, db: Session = Depends(get_sync_db)):
+    record = db.query(RefreshToken).filter(
+        RefreshToken.token_hash == _token_hash(payload.refresh_token),
+        RefreshToken.revoked_at.is_(None),
+    ).first()
+    if record:
+        record.revoked_at = datetime.utcnow()
+        db.commit()
+    return {"ok": True}

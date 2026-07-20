@@ -15,7 +15,7 @@ from backend.core.config import get_settings
 from backend.repositories import users
 from backend.services.cache import cache_service
 from database.database import get_sync_db
-from database.models import User, UserNotification, UserProfile
+from database.models import RefreshToken, User, UserNotification, UserProfile
 from sqlalchemy.orm import Session
 
 router = APIRouter(prefix="/api/users", tags=["用户"])
@@ -151,6 +151,11 @@ def change_password(
     if payload.current_password == payload.new_password:
         raise HTTPException(status_code=400, detail="新密码不能与当前密码相同")
     current_user.password_hash = hash_password(payload.new_password)
+    current_user.token_version += 1
+    db.query(RefreshToken).filter(
+        RefreshToken.user_id == current_user.id,
+        RefreshToken.revoked_at.is_(None),
+    ).update({"revoked_at": datetime.utcnow()}, synchronize_session=False)
     db.commit()
     return {"ok": True, "message": "密码已更新，请重新登录"}
 
