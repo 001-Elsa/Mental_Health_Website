@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, Float, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database.database import Base
@@ -172,6 +172,10 @@ class DiscussionLike(Base):
 
 class RiskEvent(Base):
     __tablename__ = "risk_events"
+    __table_args__ = (
+        Index("ix_risk_events_queue", "status", "level", "created_at"),
+        Index("ix_risk_events_user_open_window", "user_id", "event_type", "level", "created_at"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
@@ -205,6 +209,8 @@ class RiskAction(Base):
     from_status: Mapped[str] = mapped_column(String(24), default="")
     to_status: Mapped[str] = mapped_column(String(24), default="")
     note: Mapped[str] = mapped_column(String(512), default="")
+    request_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    ip_address: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
 
 

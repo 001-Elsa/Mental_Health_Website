@@ -39,6 +39,7 @@ class Settings:
         self.ai_max_concurrency = int(os.getenv("AI_MAX_CONCURRENCY", "8"))
         self.ai_max_retries = min(2, max(0, int(os.getenv("AI_MAX_RETRIES", "2"))))
         self.ai_retry_base_seconds = float(os.getenv("AI_RETRY_BASE_SECONDS", "0.25"))
+        self.risk_sla_scan_seconds = int(os.getenv("RISK_SLA_SCAN_SECONDS", "30"))
         self.sms_webhook_token = os.getenv("SMS_WEBHOOK_TOKEN", "")
         self.sms_sign_name = os.getenv("SMS_SIGN_NAME", "心灵伙伴")
         self.email_webhook_url = os.getenv("EMAIL_WEBHOOK_URL", "")

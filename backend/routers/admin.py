@@ -11,7 +11,9 @@ from backend.services.article_service import invalidate_articles
 from backend.services.risk_cases import (
     OPEN_STATUSES,
     InvalidRiskTransition,
+    RiskOwnershipConflict,
     RiskVersionConflict,
+    claim_case,
     transition_case,
 )
 from database.database import get_sync_db
@@ -32,7 +34,7 @@ router = APIRouter(prefix="/api/admin", tags=["运营管理"])
 
 
 class HandleRiskReq(BaseModel):
-    status: str = Field(pattern=r"^(assigned|contacted|follow_up|resolved|false_positive)$")
+    status: str = Field(pattern=r"^(claimed|processing|waiting|transferred|resolved|closed|assigned|contacted|follow_up|false_positive)$")
     note: str = Field(default="", max_length=512)
     expected_version: int = Field(ge=0)
     assignee_id: int | None = None
@@ -200,11 +202,15 @@ def handle_risk_event(
             note=payload.note.strip(),
             assignee_id=payload.assignee_id,
             next_follow_up_at=payload.next_follow_up_at,
+            request_id=getattr(request.state, "request_id", ""),
+            ip_address=request.client.host if request.client else "",
         )
     except RiskVersionConflict as exc:
         raise HTTPException(status_code=409, detail="案例已被其他管理员更新，请刷新后重试") from exc
     except InvalidRiskTransition as exc:
         raise HTTPException(status_code=422, detail=f"不允许的案例状态流转：{exc}") from exc
+    except RiskOwnershipConflict as exc:
+        raise HTTPException(status_code=403, detail="该案例已由其他管理员负责，请先转交") from exc
     consult = db.query(Consultation).filter(Consultation.id == updated.consultation_id).first()
     if consult:
         consult.intervention_status = payload.status
@@ -219,6 +225,38 @@ def handle_risk_event(
     )
     db.commit()
     return {"ok": True, "status": updated.status, "version": updated.version}
+
+
+@router.post("/risk-events/{event_id}/claim")
+def claim_risk_event(
+    event_id: int,
+    request: Request,
+    expected_version: int = Query(ge=0),
+    db: Session = Depends(get_sync_db),
+    current_user: User = Depends(require_admin),
+):
+    try:
+        event = claim_case(
+            db,
+            event_id=event_id,
+            actor_id=current_user.id,
+            expected_version=expected_version,
+            request_id=getattr(request.state, "request_id", ""),
+            ip_address=request.client.host if request.client else "",
+        )
+    except RiskVersionConflict as exc:
+        raise HTTPException(status_code=409, detail="案例已被其他管理员领取或版本已更新") from exc
+    record_audit(
+        db,
+        actor_id=current_user.id,
+        action="risk.claimed",
+        target_type="risk_event",
+        target_id=event_id,
+        detail={"to": "claimed"},
+        request_id=getattr(request.state, "request_id", ""),
+    )
+    db.commit()
+    return {"ok": True, "status": event.status, "version": event.version, "assigned_to": event.assigned_to}
 
 
 @router.get("/risk-events/{event_id}/timeline")
@@ -241,6 +279,8 @@ def risk_event_timeline(
             "from_status": row.from_status,
             "to_status": row.to_status,
             "note": row.note,
+            "request_id": row.request_id,
+            "ip_address": row.ip_address,
             "actor_id": row.actor_id,
             "actor_name": actors.get(row.actor_id, "系统"),
             "created_at": row.created_at,

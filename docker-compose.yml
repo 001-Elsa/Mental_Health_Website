@@ -50,6 +50,22 @@ services:
       timeout: 5s
       retries: 5
 
+  sla-worker:
+    image: mental_health_website-api:latest
+    command: ["sh", "-c", "unset PROMETHEUS_MULTIPROC_DIR; python -m backend.services.sla_worker"]
+    env_file:
+      - .env
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql+psycopg2://mental:mental@postgres:5432/mental_health
+      REDIS_URL: redis://redis:6379/0
+      RISK_SLA_SCAN_SECONDS: 30
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   frontend:
     build:
       context: .

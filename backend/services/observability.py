@@ -28,3 +28,15 @@ CACHE_OPERATIONS = Counter(
     ("operation", "result"),
 )
 CACHE_ERRORS = Counter("mental_health_cache_errors_total", "Redis/cache backend failures.", ("operation",))
+
+RISK_CASES = Counter(
+    "mental_health_risk_cases_total",
+    "Risk cases created, merged, transitioned or escalated.",
+    ("operation", "level"),
+)
+RISK_OPEN = Gauge(
+    "mental_health_risk_open_cases", "Open risk cases.", ("level",), multiprocess_mode="max"
+)
+RISK_SLA_OVERDUE = Gauge(
+    "mental_health_risk_sla_overdue_cases", "Risk cases currently past SLA.", multiprocess_mode="max"
+)
