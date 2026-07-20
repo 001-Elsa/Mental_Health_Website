@@ -21,3 +21,10 @@ AI_ACTIVE = Gauge(
     "mental_health_ai_active_requests", "Active AI provider requests.", multiprocess_mode="livesum"
 )
 AI_RETRIES = Counter("mental_health_ai_retries_total", "AI provider retry attempts.", ("reason",))
+
+CACHE_OPERATIONS = Counter(
+    "mental_health_cache_operations_total",
+    "Cache operations by result.",
+    ("operation", "result"),
+)
+CACHE_ERRORS = Counter("mental_health_cache_errors_total", "Redis/cache backend failures.", ("operation",))

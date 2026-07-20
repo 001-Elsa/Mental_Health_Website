@@ -44,16 +44,23 @@ def list_public(db: Session, *, title: str = "", category: str = "", published_s
 
 
 def get_public(db: Session, article_id: int) -> dict | None:
-    cache_key = f"articles:detail:{article_id}"
-    cached = cache_service.get_json(cache_key)
-    if cached is not None:
-        return cached
-    article = articles.get_article(db, article_id)
-    if not article or article.status != "已发布":
+    if article_id <= 0:
         return None
-    result = _serialize(article)
-    cache_service.set_json(cache_key, result, ttl_seconds=180)
-    return result
+    cache_key = f"articles:detail:{article_id}"
+
+    def load() -> dict | None:
+        article = articles.get_article(db, article_id)
+        if not article or article.status != "已发布":
+            return None
+        return _serialize(article)
+
+    return cache_service.get_or_load_json(
+        cache_key,
+        load,
+        ttl_seconds=180,
+        negative_ttl_seconds=20,
+        jitter_seconds=45,
+    )
 
 
 def popular(db: Session, limit: int = 10) -> list[dict]:
