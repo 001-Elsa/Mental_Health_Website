@@ -2,15 +2,15 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: mental_health
-      POSTGRES_USER: mental
-      POSTGRES_PASSWORD: mental
+      POSTGRES_DB: ${POSTGRES_DB:-mental_health}
+      POSTGRES_USER: ${POSTGRES_USER:-mental}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mental}
     ports:
       - "${POSTGRES_PORT:-5433}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mental -d mental_health"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -33,7 +33,7 @@ services:
       - .env
     environment:
       APP_ENV: production
-      DATABASE_URL: postgresql+psycopg2://mental:mental@postgres:5432/mental_health
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-mental}:${POSTGRES_PASSWORD:-mental}@postgres:5432/${POSTGRES_DB:-mental_health}
       REDIS_URL: redis://redis:6379/0
       AI_MAX_CONCURRENCY: 8
       AI_MAX_RETRIES: 2
@@ -62,7 +62,7 @@ services:
       - .env
     environment:
       APP_ENV: production
-      DATABASE_URL: postgresql+psycopg2://mental:mental@postgres:5432/mental_health
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-mental}:${POSTGRES_PASSWORD:-mental}@postgres:5432/${POSTGRES_DB:-mental_health}
       REDIS_URL: redis://redis:6379/0
       RISK_SLA_SCAN_SECONDS: 30
     depends_on:
@@ -86,7 +86,7 @@ services:
   postgres-exporter:
     image: prometheuscommunity/postgres-exporter:v0.17.1
     environment:
-      DATA_SOURCE_NAME: postgresql://mental:mental@postgres:5432/mental_health?sslmode=disable
+      DATA_SOURCE_NAME: postgresql://${POSTGRES_USER:-mental}:${POSTGRES_PASSWORD:-mental}@postgres:5432/${POSTGRES_DB:-mental_health}?sslmode=disable
     depends_on:
       postgres:
         condition: service_healthy
@@ -118,7 +118,7 @@ services:
   grafana:
     image: grafana/grafana:12.0.2
     environment:
-      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-mental-health-admin}
       GF_USERS_ALLOW_SIGN_UP: "false"
     volumes:

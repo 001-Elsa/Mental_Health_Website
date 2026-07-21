@@ -1,8 +1,0 @@
-INFO:     Will watch for changes in these directories: ['D:\\projects\\mental_health_website']
-INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
-INFO:     Started reloader process [8728] using StatReload
-INFO:     Started server process [1536]
-INFO:     Waiting for application startup.
-INFO:     Application startup complete.
-2026-07-18 10:08:19,242 INFO mental_health.api GET /api/health 200 5.3ms request_id=641a33c6-cdbe-46d7-90e9-6e1b2d8d9358
-2026-07-18 10:18:26,709 INFO mental_health.api GET /favicon.ico 404 7.6ms request_id=3491d4d8-9b40-43b4-bd7f-bea614225ab4

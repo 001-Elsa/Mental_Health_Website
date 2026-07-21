@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func
+from sqlalchemy import Numeric, func
 from sqlalchemy.orm import Session
 
 from backend.auth import get_current_user, require_admin
@@ -11,6 +11,11 @@ from database.database import get_sync_db
 from database.models import Consultation, MoodLog, User
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
+
+
+def _date_key(value) -> str:
+    """Normalize SQLite strings and PostgreSQL date objects for response maps."""
+    return value.isoformat() if hasattr(value, "isoformat") else str(value)
 
 
 @router.get("/overview", response_model=AnalyticsOverview)
@@ -105,7 +110,9 @@ def get_mood_trend(
     cutoff_date = datetime.utcnow().date() - timedelta(days=days - 1)
     query = db.query(
         func.date(MoodLog.created_at).label("date"),
-        func.round(func.avg(MoodLog.score), 1).label("avg_score"),
+        # PostgreSQL only accepts the two-argument round() overload for
+        # numeric, whereas avg(integer) returns double precision.
+        func.round(func.avg(MoodLog.score).cast(Numeric), 1).label("avg_score"),
         func.count(MoodLog.id).label("count"),
     ).filter(func.date(MoodLog.created_at) >= cutoff_date.isoformat())
     if scope == "mine":
@@ -116,7 +123,7 @@ def get_mood_trend(
         .order_by(func.date(MoodLog.created_at))
         .all()
     )
-    result_map = {r.date: (float(r.avg_score), int(r.count)) for r in rows}
+    result_map = {_date_key(r.date): (float(r.avg_score), int(r.count)) for r in rows}
     result = []
     for index in range(days):
         day = cutoff_date + timedelta(days=index)
@@ -152,8 +159,8 @@ def get_consultation_stats(
         .all()
     )
 
-    count_map = {row.date: row.count for row in rows}
-    user_map = {row.date: row.user_count for row in rows}
+    count_map = {_date_key(row.date): row.count for row in rows}
+    user_map = {_date_key(row.date): row.user_count for row in rows}
     result = []
     for index in range(days):
         day = cutoff_date + timedelta(days=index)
@@ -206,9 +213,9 @@ def get_user_activity(
         .all()
     )
 
-    diary_map = {row.date: row.diary_users for row in mood_day}
-    cons_map = {row.date: row.cons_users for row in cons_day}
-    new_map = {row.date: row.new_users for row in new_day}
+    diary_map = {_date_key(row.date): row.diary_users for row in mood_day}
+    cons_map = {_date_key(row.date): row.cons_users for row in cons_day}
+    new_map = {_date_key(row.date): row.new_users for row in new_day}
 
     mood_uid_day = {}
     for row in mood_day:
@@ -218,7 +225,7 @@ def get_user_activity(
             .distinct()
             .all()
         )
-        mood_uid_day[row.date] = {uid_row[0] for uid_row in uid_rows}
+        mood_uid_day[_date_key(row.date)] = {uid_row[0] for uid_row in uid_rows}
 
     cons_uid_day = {}
     for row in cons_day:
@@ -228,7 +235,7 @@ def get_user_activity(
             .distinct()
             .all()
         )
-        cons_uid_day[row.date] = {uid_row[0] for uid_row in uid_rows}
+        cons_uid_day[_date_key(row.date)] = {uid_row[0] for uid_row in uid_rows}
 
     result = []
     for index in range(days):

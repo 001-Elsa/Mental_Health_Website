@@ -1,6 +1,6 @@
 """deepen risk case workflow and audit trail
 
-Revision ID: 0010_risk_cases
+Revision ID: 0010_vertical_depth
 Revises: 0009_recommendation_preference
 Create Date: 2026-07-20
 """
@@ -8,7 +8,7 @@ Create Date: 2026-07-20
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0010_risk_cases"
+revision = "0010_vertical_depth"
 down_revision = "0009_recommendation_preference"
 branch_labels = None
 depends_on = None

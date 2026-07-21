@@ -1,6 +1,0 @@
-INFO:     Started server process [216]
-INFO:     Waiting for application startup.
-INFO:     Application startup complete.
-INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
-2026-07-17 22:03:40,117 INFO mental_health.api GET /api/health 200 3.2ms request_id=8b2943fb-358d-471c-9f49-675adab3b928
-2026-07-17 22:03:40,327 INFO mental_health.api GET /api/articles/ 200 22.1ms request_id=3440f45b-68bd-4d85-9624-5296649ba01c

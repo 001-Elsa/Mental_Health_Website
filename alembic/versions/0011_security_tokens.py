@@ -1,7 +1,7 @@
 """add refresh token rotation and token versioning
 
 Revision ID: 0011_security_tokens
-Revises: 0010_risk_cases
+Revises: 0010_vertical_depth
 Create Date: 2026-07-20
 """
 
@@ -9,7 +9,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "0011_security_tokens"
-down_revision = "0010_risk_cases"
+down_revision = "0010_vertical_depth"
 branch_labels = None
 depends_on = None
 

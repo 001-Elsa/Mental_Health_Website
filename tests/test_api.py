@@ -5,14 +5,18 @@ from itertools import count
 from pathlib import Path
 from uuid import uuid4
 
-test_db = Path("test_mental_health.db").absolute()
-if test_db.exists():
-    test_db.unlink()
+# Developers can run this file without any infrastructure.  CI supplies a
+# PostgreSQL URL and Redis URL, which must take precedence so the production
+# adapter is exercised there.
+if not os.environ.get("DATABASE_URL"):
+    test_db = Path("test_mental_health.db").absolute()
+    if test_db.exists():
+        test_db.unlink()
+    os.environ["DATABASE_URL"] = f"sqlite:///{test_db}"
 
-os.environ["APP_ENV"] = "development"
-os.environ["DATABASE_URL"] = f"sqlite:///{test_db}"
-os.environ["SECRET_KEY"] = "test-secret"
-os.environ["DEEPSEEK_API_KEY"] = ""
+os.environ.setdefault("APP_ENV", "development")
+os.environ.setdefault("SECRET_KEY", "test-secret")
+os.environ.setdefault("DEEPSEEK_API_KEY", "")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -763,6 +767,32 @@ def test_article_cache_negative_value_prevents_repeated_database_fallback():
     assert service.get_or_load_json("article:detail:999999", missing_loader, ttl_seconds=60) is None
     assert service.get_or_load_json("article:detail:999999", missing_loader, ttl_seconds=60) is None
     assert calls == 1
+
+
+def test_redis_failure_opens_circuit_and_recovers_to_real_redis():
+    """Exercise the same failure/degrade/recovery path used by Redis in CI."""
+    service = CacheService()
+    if service._redis is None:
+        # Local SQLite-only runs intentionally work without infrastructure.
+        return
+
+    real_redis = service._redis
+
+    class UnavailableRedis:
+        def get(self, _key):
+            raise ConnectionError("injected Redis outage")
+
+    service._redis = UnavailableRedis()
+    service.set("test:redis-recovery", "fallback", 60)
+    assert service.backend == "redis_degraded"
+    assert service.get("test:redis-recovery") == "fallback"
+
+    # A real Redis client is restored and the circuit is allowed to probe it.
+    service._redis = real_redis
+    service._redis_disabled_until = 0.0
+    service.set("test:redis-recovery", "recovered", 60)
+    assert service.get("test:redis-recovery") == "recovered"
+    service.delete("test:redis-recovery")
 
 
 def test_streaming_chat_emits_sse_and_persists_after_completion():

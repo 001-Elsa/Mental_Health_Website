@@ -1,5 +1,7 @@
 # 心晴 Campus
 
+![CI](https://github.com/001-Elsa/Mental_Health_Website/actions/workflows/ci.yml/badge.svg)
+
 面向高校学生的心理健康支持平台，提供用户模式和后台管理员模式两套体验。
 
 用户模式只展示当前用户自己的情绪记录、AI 倾听、心理画像、支持进展和个性化推荐。后台管理员模式用于查看全站运营指标、风险干预队列、内容审核、用户管理和审计记录。
@@ -14,6 +16,8 @@
 - 心理画像推荐：显性展示情绪主线、压力来源、支持偏好，并解释每条文章或练习为什么被推荐。
 - 风险干预工作台：管理员可处理风险案例、SLA、处置时间线、通知和审计日志。
 - 工程化能力：FastAPI、React、TypeScript、SQLAlchemy、Alembic、Redis 降级、Docker Compose、CI、自动化测试和压测脚本。
+
+> 架构定位：这是一个模块化单体应用，配套一个 SLA 后台 worker、PostgreSQL、Redis 与监控组件；并非微服务或分布式系统。
 
 ## 技术栈
 
@@ -38,6 +42,8 @@ docker compose up --build
 - Prometheus: `http://127.0.0.1:9091`
 - Grafana: `http://127.0.0.1:3001`（默认 `admin / mental-health-admin`，首次部署后请修改）
 
+本地 Compose 的 `mental`、`mental-health-admin` 等默认值仅用于演示。对公网部署前，必须在 `.env` 中为 `SECRET_KEY`、PostgreSQL 与 Grafana 管理员账户设置独立的强随机值；详见 [部署安全与已知限制](docs/DEPLOYMENT.md)。
+
 ## 纵向深化能力
 
 - AI：`httpx.AsyncClient` 连接池、并发信号量、分级超时、最多 2 次可恢复错误重试、安全降级，以及 `POST /api/consult/chat/stream` SSE 流式输出。
@@ -48,6 +54,8 @@ docker compose up --build
 - 可观测性：4 Uvicorn worker 多进程指标、Prometheus、Grafana、PostgreSQL/Redis exporters 和 5 条告警规则。
 
 详细实现、验证方式和已知边界见 [纵向深化说明](docs/VERTICAL_UPGRADE.md) 与 [Docker 性能报告](docs/PERFORMANCE.md)。
+
+性能报告记录的是 Windows Docker Desktop 上的可复现基线，不代表生产容量：在 PostgreSQL、Redis、4 个 Uvicorn worker 环境中，文章列表（并发 50 / 1000 请求）约为 **101.95 QPS、P95 1412ms**；Redis 故障熔断后，故障场景吞吐量从 **7.52 QPS 提升至 62.69 QPS**。项目不宣称高并发或万级并发能力。
 
 本地开发也可以分别启动后端和前端：
 
