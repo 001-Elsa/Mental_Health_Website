@@ -8,7 +8,7 @@ import { z } from "zod";
 import { articlesApi, contentApi, knowledgeApi, recommendationsApi } from "../api/queries";
 import type { RecommendationEmotion } from "../api/queries";
 import { useAuthStore } from "../store/auth";
-import type { Article } from "../types";
+import type { Article, KnowledgeSource } from "../types";
 
 const schema = z.object({
   title: z.string().min(2, "请输入标题"),
@@ -35,11 +35,27 @@ const periodOptions = [
   { value: "365d", label: "最近一年" },
 ];
 
-const recommendationEmotions: RecommendationEmotion[] = ["焦虑", "低落", "烦躁", "平静", "愉悦"];
+const recommendationEmotions: RecommendationEmotion[] = ["焦虑", "低落", "烦躁", "平稳", "愉悦"];
+
+const sourceTypeCopy: Record<KnowledgeSource["source_type"], string> = {
+  reviewed_knowledge: "审核知识库",
+  own_history: "我的历史倾听",
+  public_conversation: "匿名公开经验",
+};
 
 function displayDate(value: string | null | undefined) {
   if (!value) return "日期未知";
   return new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(value));
+}
+
+function SourceCard({ source, index }: { source: KnowledgeSource; index?: number }) {
+  return (
+    <span className={`knowledge-source-card ${source.source_type}`}>
+      {index != null && <b>[{index + 1}]</b>}
+      <strong>{source.title}</strong>
+      <small>{sourceTypeCopy[source.source_type]} · {source.source || "平台资料"}</small>
+    </span>
+  );
 }
 
 export default function ArticlesPage() {
@@ -99,6 +115,7 @@ export default function ArticlesPage() {
 
   const resultCount = view === "articles" ? articles.data?.length : conversations.data?.length;
   const isLoading = view === "articles" ? articles.isLoading : conversations.isLoading;
+  const sourceSummary = knowledge.data?.source_summary;
 
   return (
     <section className="page articles-page">
@@ -140,7 +157,7 @@ export default function ArticlesPage() {
 
       {view === "conversations" ? (
         <>
-          <div className="privacy-result-note"><ShieldCheck size={16} /><span>仅展示用户主动设为公开的倾听记录，私人对话不会进入搜索结果。</span></div>
+          <div className="privacy-result-note"><ShieldCheck size={16} /><span>仅展示用户主动设为公开的倾听记录，私密对话不会进入搜索结果。</span></div>
           <div className="public-conversation-grid">
             {conversations.data?.map((item) => (
               <article className="public-conversation-card" key={item.id}>
@@ -155,7 +172,11 @@ export default function ArticlesPage() {
       ) : (
         <>
           <section className="knowledge-band">
-            <div><span className="section-kicker">Grounded answer</span><h2>心理知识库问答</h2><p>结合审核资料、你的倾听记录与匿名公开经验生成回答。</p></div>
+            <div>
+              <span className="section-kicker">Grounded answer</span>
+              <h2>可信心理知识问答</h2>
+              <p>回答会区分审核知识库、你的历史倾听、匿名公开经验；资料不足时会明确拒答。</p>
+            </div>
             <form onSubmit={(event) => { event.preventDefault(); if (question.trim()) knowledge.mutate(question.trim()); }}>
               <input value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="例如：考试焦虑到睡不着可以怎么做？" disabled={knowledge.isPending} />
               <button className="icon-button" aria-label={knowledge.isPending ? "正在生成回答" : "提交问题"} disabled={knowledge.isPending}>{knowledge.isPending ? <LoaderCircle className="spin" size={18} /> : <Send size={18} />}</button>
@@ -163,18 +184,28 @@ export default function ArticlesPage() {
             {knowledge.isPending ? (
               <div className="knowledge-generating" role="status" aria-live="polite">
                 <LoaderCircle className="spin" size={22} />
-                <div><strong>正在为你生成量身定做的回答</strong><span>正在匹配你的相关倾听记录、匿名公开经验和审核资料，请稍候。</span></div>
+                <div><strong>正在生成有依据的回答</strong><span>正在匹配审核资料、你的相关记录和匿名公开经验。</span></div>
                 <i /><i /><i />
               </div>
             ) : knowledge.data ? (
-              <div className="knowledge-answer">
+              <div className={`knowledge-answer ${knowledge.data.grounded ? "" : "refused"}`}>
+                <div className="knowledge-source-summary">
+                  <span>审核资料 {sourceSummary?.reviewed_knowledge ?? 0}</span>
+                  <span>我的历史 {sourceSummary?.own_history ?? 0}</span>
+                  <span>公开经验 {sourceSummary?.public_conversations ?? 0}</span>
+                </div>
+                {!knowledge.data.grounded && <strong className="knowledge-refusal">资料不足，已安全拒答</strong>}
                 <p>{knowledge.data.answer.replace(/\*\*/g, "")}</p>
-                {(knowledge.data.personalization.own_history > 0 || knowledge.data.personalization.public_conversations > 0) && (
-                  <small className="knowledge-context-note">
-                    已结合你的 {knowledge.data.personalization.own_history} 段相关记录和 {knowledge.data.personalization.public_conversations} 段匿名公开倾听经验
-                  </small>
+                {knowledge.data.citations.length > 0 && (
+                  <div className="knowledge-source-list">
+                    {knowledge.data.citations.map((citation, index) => <SourceCard key={citation.id} source={citation} index={index} />)}
+                  </div>
                 )}
-                <div>{knowledge.data.citations.map((citation, index) => <span key={citation.id}>[{index + 1}] {citation.title} · {citation.source || "平台资料"}</span>)}</div>
+                {knowledge.data.context_sources.length > 0 && (
+                  <div className="knowledge-source-list context">
+                    {knowledge.data.context_sources.map((source) => <SourceCard key={source.id} source={source} />)}
+                  </div>
+                )}
               </div>
             ) : null}
             {knowledge.error && <p className="form-error">{knowledge.error.message}</p>}
@@ -182,7 +213,12 @@ export default function ArticlesPage() {
 
           {token && recommended.data ? (
             <div className="recommendation-banner">
-              <div className="recommendation-banner-title"><Sparkles size={18} /><strong>推荐状态</strong></div>
+              <div className="recommendation-banner-title"><Sparkles size={18} /><strong>心理画像推荐</strong></div>
+              <div className="profile-explain">
+                <span>情绪主线：{recommended.data.profile.dominant_emotions.join("、") || recommended.data.profile.emotion}</span>
+                <span>压力来源：{recommended.data.profile.stressors.join("、") || "尚未识别"}</span>
+                <span>支持偏好：{recommended.data.profile.coping_preferences.join("、") || "尚未识别"}</span>
+              </div>
               <label className="recommendation-state-control">
                 <span className="sr-only">选择推荐状态</span>
                 <select
@@ -195,7 +231,7 @@ export default function ArticlesPage() {
                 </select>
               </label>
               <small role="status" aria-live="polite">
-                {saveRecommendationEmotion.isPending ? "正在保存" : saveRecommendationEmotion.error ? saveRecommendationEmotion.error.message : recommended.data.profile.is_manual ? "已保存" : "选择后保存"}
+                {saveRecommendationEmotion.isPending ? "正在保存" : saveRecommendationEmotion.error ? saveRecommendationEmotion.error.message : recommended.data.profile.is_manual ? "已使用手动状态" : "自动画像推荐"}
               </small>
             </div>
           ) : null}
@@ -204,7 +240,8 @@ export default function ArticlesPage() {
             {displayedArticles.map((item) => (
               <article className="article-card" key={item.id}>
                 <div className="article-card-top"><span className="topic-tag">{item.category || "心理科普"}</span>{reasonById.has(item.id) && <span className="recommended-mark"><Sparkles size={13} /> 推荐</span>}</div>
-                <h2>{item.title}</h2><p>{item.summary || item.content.slice(0, 100)}</p>
+                <h2>{item.title}</h2>
+                <p>{item.summary || item.content.slice(0, 100)}</p>
                 <div className="article-meta"><span>{item.source_name || item.author || "校心理中心"}</span><span>{displayDate(item.source_url ? item.published_at : item.created_at)}</span></div>
                 {item.source_url ? (
                   <a className="article-open-link" href={item.source_url} target="_blank" rel="noreferrer">阅读原文<ExternalLink size={14} /></a>
@@ -221,9 +258,12 @@ export default function ArticlesPage() {
             <section className="workspace-section editor-section">
               <div className="section-heading"><div><span className="section-kicker">CMS</span><h2>发布心理内容</h2></div></div>
               <form className="editor-grid" onSubmit={form.handleSubmit((values) => save.mutate(values))}>
-                <input placeholder="文章标题" {...form.register("title")} /><input placeholder="分类，如：压力管理" {...form.register("category")} />
-                <input className="wide" placeholder="摘要" {...form.register("summary")} /><textarea className="wide" placeholder="正文" {...form.register("content")} />
-                <select {...form.register("status")}><option>已发布</option><option>草稿</option></select><button disabled={save.isPending}>发布内容</button>
+                <input placeholder="文章标题" {...form.register("title")} />
+                <input placeholder="分类，如：压力管理" {...form.register("category")} />
+                <input className="wide" placeholder="摘要" {...form.register("summary")} />
+                <textarea className="wide" placeholder="正文" {...form.register("content")} />
+                <select {...form.register("status")}><option>已发布</option><option>草稿</option></select>
+                <button disabled={save.isPending}>发布内容</button>
                 <p className="form-error wide">{Object.values(form.formState.errors)[0]?.message || save.error?.message}</p>
               </form>
             </section>

@@ -73,6 +73,7 @@ class Bookmark(Base):
 
 class Consultation(Base):
     __tablename__ = "consultations"
+    __table_args__ = (Index("ix_consultations_user_created", "user_id", "created_at"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
@@ -112,6 +113,7 @@ class Article(Base):
 
 class Discussion(Base):
     __tablename__ = "discussions"
+    __table_args__ = (Index("ix_discussions_visibility_created", "visibility", "created_at"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
@@ -144,6 +146,7 @@ class PlazaMessage(Base):
 
 class ChatMessage(Base):
     __tablename__ = "chat_messages"
+    __table_args__ = (Index("ix_chat_messages_conversation_created", "conversation_id", "created_at", "id"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     conversation_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)

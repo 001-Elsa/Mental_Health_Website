@@ -124,7 +124,7 @@ def create_mood_log(
         )
     db.commit()
     db.refresh(mood)
-    cache_service.delete("analytics:overview")
+    cache_service.delete(f"analytics:overview:user:{current_user.id}")
     cache_service.delete(f"analytics:mood-forecast:{current_user.id}:7")
     result = MoodLogOut.model_validate(mood).model_dump(mode="json")
     result["risk"] = {

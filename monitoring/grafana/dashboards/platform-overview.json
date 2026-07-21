@@ -1,0 +1,22 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "panels": [
+    {"type":"stat","title":"API QPS","gridPos":{"x":0,"y":0,"w":6,"h":4},"targets":[{"expr":"sum(rate(mental_health_http_requests_total[5m]))"}]},
+    {"type":"stat","title":"API 5xx Rate","gridPos":{"x":6,"y":0,"w":6,"h":4},"targets":[{"expr":"sum(rate(mental_health_http_requests_total{status=~\"5..\"}[5m])) / clamp_min(sum(rate(mental_health_http_requests_total[5m])), 0.001)"}]},
+    {"type":"stat","title":"Active AI Sessions","gridPos":{"x":12,"y":0,"w":6,"h":4},"targets":[{"expr":"mental_health_ai_active_requests"}]},
+    {"type":"stat","title":"Overdue Risk Cases","gridPos":{"x":18,"y":0,"w":6,"h":4},"targets":[{"expr":"mental_health_risk_sla_overdue_cases"}]},
+    {"type":"timeseries","title":"API P50 / P95 / P99","gridPos":{"x":0,"y":4,"w":12,"h":8},"targets":[{"expr":"histogram_quantile(0.50, sum by (le) (rate(mental_health_http_request_duration_seconds_bucket[5m])))","legendFormat":"P50"},{"expr":"histogram_quantile(0.95, sum by (le) (rate(mental_health_http_request_duration_seconds_bucket[5m])))","legendFormat":"P95"},{"expr":"histogram_quantile(0.99, sum by (le) (rate(mental_health_http_request_duration_seconds_bucket[5m])))","legendFormat":"P99"}]},
+    {"type":"timeseries","title":"AI TTFT / Full Response P95","gridPos":{"x":12,"y":4,"w":12,"h":8},"targets":[{"expr":"histogram_quantile(0.95, sum by (le) (rate(mental_health_ai_ttft_seconds_bucket[5m])))","legendFormat":"TTFT P95"},{"expr":"histogram_quantile(0.95, sum by (le) (rate(mental_health_ai_response_duration_seconds_bucket[5m])))","legendFormat":"Full P95"}]},
+    {"type":"timeseries","title":"Cache Results","gridPos":{"x":0,"y":12,"w":8,"h":7},"targets":[{"expr":"sum by (result) (rate(mental_health_cache_operations_total[5m]))","legendFormat":"{{result}}"}]},
+    {"type":"timeseries","title":"Open Risk Cases","gridPos":{"x":8,"y":12,"w":8,"h":7},"targets":[{"expr":"mental_health_risk_open_cases","legendFormat":"{{level}}"}]},
+    {"type":"timeseries","title":"PostgreSQL / Redis Up","gridPos":{"x":16,"y":12,"w":8,"h":7},"targets":[{"expr":"pg_up","legendFormat":"PostgreSQL"},{"expr":"redis_up","legendFormat":"Redis"}]}
+  ],
+  "schemaVersion": 41,
+  "tags": ["mental-health", "fastapi"],
+  "templating": {"list": []},
+  "time": {"from": "now-6h", "to": "now"},
+  "title": "Mental Health Platform Overview",
+  "uid": "mental-health-platform",
+  "version": 1
+}

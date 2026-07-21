@@ -30,9 +30,7 @@ class CrawlSource:
 
 DEFAULT_TARGETS = (
     CrawlTarget("https://www.zhihu.com/question/58915510/answer/3045876619", "焦虑缓解"),
-    CrawlTarget("https://www.zhihu.com/question/504516772/answer/1967165396151928234", "心理科普"),
     CrawlTarget("https://zhuanlan.zhihu.com/p/1981329512047321929", "睡眠与精力"),
-    CrawlTarget("https://www.zhihu.com/question/650416617/answer/122857212755", "求职压力"),
     CrawlTarget("https://www.uwh.edu.cn/xljk/detail/1140/18395.html", "学业压力"),
     CrawlTarget("https://dxs.moe.gov.cn/zx/a/xl_xlyr_xlyral/260526/2034423.shtml", "毕业适应"),
     CrawlTarget("https://dxs.moe.gov.cn/zx/a/xl_xlyr_xlyral/250319/1984335.shtml", "正念练习"),
@@ -63,6 +61,9 @@ DEFAULT_SOURCES = (
     CrawlSource("https://www.uwh.edu.cn/xljk/article/1140.html?page=2", "心理科普", r"/xljk/detail/1140/\d+\.html$"),
     CrawlSource("https://www.hnpi.edu.cn/xljk/993/list.htm", "心理科普", r"/xljk/\d{4}/\d{4}/c993a\d+/page\.htm$"),
     CrawlSource("https://xinli.univs.cn/pbjy/", "心理科普", r"/a/pbjy_[^/]+/\d+/\d+\.shtml$"),
+    CrawlSource("https://xinli.univs.cn/", "心理科普", r"/a/pbjy_[^/]+/\d+/\d+\.shtml$", 100),
+    CrawlSource("https://xinli.univs.cn/pbjy/pbyr/", "成长适应", r"/a/pbjy_pbyr/\d+/\d+\.shtml$", 60),
+    CrawlSource("https://xinli.univs.cn/pbjy/xlwk/qxgl/", "情绪调节", r"/a/pbjy_xlwk_[^/]+/\d+/\d+\.shtml$", 60),
 )
 
 SOURCE_NAMES = {
@@ -74,6 +75,10 @@ SOURCE_NAMES = {
     "xinli.univs.cn": "中国大学生在线·阳光心理",
     "zut.edu.cn": "中原工学院大学生心理健康中心",
     "huayu.edu.cn": "山东华宇工学院心理健康教育中心",
+    "buaa.edu.cn": "北京航空航天大学心理咨询与发展辅导研究中心",
+    "nankai.edu.cn": "南开心理健康指导中心",
+    "hust.edu.cn": "华中科技大学心理健康教育中心",
+    "hnu.edu.cn": "湖南大学心理健康教育中心",
 }
 
 CATEGORY_KEYWORDS = (

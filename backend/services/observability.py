@@ -2,6 +2,25 @@ from __future__ import annotations
 
 from prometheus_client import Counter, Gauge, Histogram
 
+
+HTTP_REQUESTS = Counter(
+    "mental_health_http_requests_total",
+    "HTTP requests by method, normalized route and status.",
+    ("method", "route", "status"),
+)
+HTTP_DURATION = Histogram(
+    "mental_health_http_request_duration_seconds",
+    "HTTP request duration by normalized route.",
+    ("method", "route"),
+    buckets=(0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 15, 45),
+)
+HTTP_IN_PROGRESS = Gauge(
+    "mental_health_http_requests_in_progress",
+    "HTTP requests currently being handled.",
+    ("method",),
+    multiprocess_mode="livesum",
+)
+
 AI_REQUESTS = Counter(
     "mental_health_ai_requests_total",
     "AI provider requests by outcome.",

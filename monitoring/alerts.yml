@@ -1,0 +1,28 @@
+groups:
+  - name: mental-health-platform
+    rules:
+      - alert: ApiErrorRateHigh
+        expr: sum(rate(mental_health_http_requests_total{status=~"5.."}[5m])) / clamp_min(sum(rate(mental_health_http_requests_total[5m])), 0.001) > 0.05
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "API 5xx 错误率持续超过 5%"}
+      - alert: AiTimeoutRateHigh
+        expr: sum(rate(mental_health_ai_requests_total{outcome=~".*timeout"}[5m])) / clamp_min(sum(rate(mental_health_ai_requests_total[5m])), 0.001) > 0.20
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "AI 超时率持续超过 20%"}
+      - alert: RiskCaseSlaOverdue
+        expr: mental_health_risk_sla_overdue_cases > 0
+        for: 1m
+        labels: {severity: critical}
+        annotations: {summary: "存在超过 SLA 的风险案例"}
+      - alert: RedisUnavailable
+        expr: redis_up == 0
+        for: 1m
+        labels: {severity: warning}
+        annotations: {summary: "Redis 不可用"}
+      - alert: PostgresConnectionsHigh
+        expr: sum(pg_stat_activity_count) / clamp_min(pg_settings_max_connections, 1) > 0.8
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "PostgreSQL 连接使用率超过 80%"}

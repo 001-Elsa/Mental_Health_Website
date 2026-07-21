@@ -10,6 +10,9 @@ from backend.services.ai_client import ai_client
 from backend.services.risk_engine import assess_risk
 from database.models import Article, ChatMessage, Consultation, KnowledgeDocument
 
+PUBLISHED_STATUSES = {"published", "已发布", "宸插彂甯?"}
+PUBLIC_VALUES = {"公开", "鍏紑"}
+
 
 @dataclass(frozen=True)
 class RetrievedChunk:
@@ -19,6 +22,16 @@ class RetrievedChunk:
     content: str
     score: float
     kind: str = "knowledge"
+
+
+@dataclass(frozen=True)
+class KnowledgeAnswer:
+    answer: str
+    knowledge_chunks: list[RetrievedChunk]
+    conversation_chunks: list[RetrievedChunk]
+    personalization: dict[str, int]
+    grounded: bool
+    refusal_reason: str = ""
 
 
 def _tokens(text: str) -> list[str]:
@@ -31,7 +44,7 @@ def _tokens(text: str) -> list[str]:
 
 def _score(query_tokens: list[str], text: str) -> float:
     document_tokens = _tokens(text)
-    if not document_tokens:
+    if not query_tokens or not document_tokens:
         return 0.0
     counts = Counter(document_tokens)
     length_norm = 1 + math.log(len(document_tokens))
@@ -41,20 +54,23 @@ def _score(query_tokens: list[str], text: str) -> float:
 def retrieve(db: Session, query: str, limit: int = 4) -> list[RetrievedChunk]:
     candidates: list[RetrievedChunk] = []
     query_tokens = _tokens(query)
-    for document in db.query(KnowledgeDocument).filter(KnowledgeDocument.status == "published").all():
+    for document in db.query(KnowledgeDocument).filter(KnowledgeDocument.status.in_(PUBLISHED_STATUSES)).all():
         score = _score(query_tokens, f"{document.title} {document.category} {document.content}")
         if score > 0:
-            candidates.append(RetrievedChunk(f"knowledge:{document.id}", document.title, document.source, document.content, score))
-    for article in db.query(Article).filter(Article.status == "已发布").all():
+            candidates.append(RetrievedChunk(f"knowledge:{document.id}", document.title, document.source, document.content, score, "knowledge"))
+    for article in db.query(Article).filter(Article.status.in_(PUBLISHED_STATUSES)).all():
         score = _score(query_tokens, f"{article.title} {article.category} {article.summary} {article.content}")
         if score > 0:
-            candidates.append(RetrievedChunk(
-                f"article:{article.id}",
-                article.title,
-                article.source_name or article.author,
-                article.content or article.summary,
-                score,
-            ))
+            candidates.append(
+                RetrievedChunk(
+                    f"article:{article.id}",
+                    article.title,
+                    article.source_name or article.author or "平台文章",
+                    article.content or article.summary,
+                    score,
+                    "article",
+                )
+            )
     ranked = sorted(candidates, key=lambda item: item.score, reverse=True)
     if not ranked:
         return []
@@ -92,7 +108,7 @@ def retrieve_conversation_context(
         )
         scoped_rows.extend((row, "own_conversation") for row in own_rows)
 
-    public_query = db.query(Consultation).filter(Consultation.visibility == "公开")
+    public_query = db.query(Consultation).filter(Consultation.visibility.in_(PUBLIC_VALUES))
     if user_id is not None:
         public_query = public_query.filter(Consultation.user_id != user_id)
     public_rows = (
@@ -128,14 +144,16 @@ def retrieve_conversation_context(
         if score <= 0:
             continue
         is_own = kind == "own_conversation"
-        candidates.append(RetrievedChunk(
-            id=f"{kind}:{consultation.id}",
-            title="与你过往经历相关的倾听记录" if is_own else "同学公开分享的相关经历",
-            source="你的历史倾听" if is_own else "匿名公开倾听",
-            content=_anonymize(searchable[:2600]),
-            score=score,
-            kind=kind,
-        ))
+        candidates.append(
+            RetrievedChunk(
+                id=f"{kind}:{consultation.id}",
+                title="与你过往经历相关的倾听记录" if is_own else "同学公开分享的相关经验",
+                source="你的历史倾听" if is_own else "匿名公开倾听",
+                content=_anonymize(searchable[:2600]),
+                score=score,
+                kind=kind,
+            )
+        )
 
     ranked = sorted(candidates, key=lambda item: item.score, reverse=True)
     own_chunks = [item for item in ranked if item.kind == "own_conversation"][:own_limit]
@@ -148,10 +166,17 @@ async def answer_with_knowledge(
     question: str,
     *,
     user_id: int | None = None,
-) -> tuple[str, list[RetrievedChunk], dict[str, int]]:
+) -> KnowledgeAnswer:
     assessment = assess_risk(question)
     if assessment.requires_intervention:
-        return await ai_client.chat([], question, assessment), [], {"own_history": 0, "public_conversations": 0}
+        return KnowledgeAnswer(
+            answer=await ai_client.chat([], question, assessment),
+            knowledge_chunks=[],
+            conversation_chunks=[],
+            personalization={"own_history": 0, "public_conversations": 0},
+            grounded=False,
+            refusal_reason="risk_intervention",
+        )
 
     knowledge_chunks = retrieve(db, question)
     conversation_chunks = retrieve_conversation_context(db, question, user_id=user_id)
@@ -160,23 +185,31 @@ async def answer_with_knowledge(
         "public_conversations": sum(chunk.kind == "public_conversation" for chunk in conversation_chunks),
     }
     if not knowledge_chunks and not conversation_chunks:
-        return (
-            "知识库和相关倾听记录中暂时没有足够信息。你可以换一种说法，或咨询学校心理中心。",
-            [],
-            personalization,
+        return KnowledgeAnswer(
+            answer="我暂时没有检索到足够可靠的资料来回答这个问题。你可以换一种更具体的问法，或优先咨询学校心理中心、专业咨询师等线下支持资源。",
+            knowledge_chunks=[],
+            conversation_chunks=[],
+            personalization=personalization,
+            grounded=False,
+            refusal_reason="insufficient_evidence",
         )
+
     if not get_settings().deepseek_api_key:
         if knowledge_chunks:
             excerpt = knowledge_chunks[0].content[:260].strip()
-            return f"根据《{knowledge_chunks[0].title}》：{excerpt}", knowledge_chunks, personalization
-        return (
-            "我找到了与你问题相关的倾听记录，但当前 AI 服务未启用，暂时无法安全地综合生成个性化建议。",
-            [],
+            answer = f"根据《{knowledge_chunks[0].title}》：{excerpt}"
+            return KnowledgeAnswer(answer, knowledge_chunks, conversation_chunks, personalization, True)
+        return KnowledgeAnswer(
+            "我找到了相关的个人/公开倾听上下文，但当前 AI 服务未启用。为了避免过度推断，我不会把这些经历直接改写成建议；你可以补充一个更具体的问题，或查看下方来源线索。",
+            knowledge_chunks,
+            conversation_chunks,
             personalization,
+            False,
+            "model_unavailable_for_context_only",
         )
 
     knowledge_context = "\n\n".join(
-        f"资料 {index + 1}｜{chunk.title}｜来源：{chunk.source}\n{chunk.content[:1200]}"
+        f"资料 {index + 1}《{chunk.title}》来源：{chunk.source}\n{chunk.content[:1200]}"
         for index, chunk in enumerate(knowledge_chunks)
     ) or "没有检索到可引用的审核资料。"
     conversation_context = "\n\n".join(
@@ -185,10 +218,9 @@ async def answer_with_knowledge(
     ) or "没有检索到相关倾听记录。"
     prompt = (
         "请为高校学生生成量身定做的心理支持回答，不做医疗诊断。\n"
-        "你可以引用‘审核资料’，并在对应句末用[1][2]标注；资料不足时必须说明。\n"
-        "‘倾听上下文’只用于理解用户长期处境和归纳可复用的支持方式。"
-        "不得逐字复述、透露身份或联系方式，不得声称其他学生的经历必然适用于当前用户。\n"
-        "回答要先共情，再给2到4个具体可执行步骤，最后说明何时应联系学校心理中心或专业机构。\n\n"
+        "可以引用“审核资料”，并在对应句末用[1][2]标注；资料不足时必须说明。\n"
+        "“倾听上下文”只用于理解用户长期处境和归纳可复用支持方式，不得逐字复述、透露身份或联系方式。\n"
+        "回答先共情，再给2到4个具体可执行步骤，最后说明何时应联系学校心理中心或专业机构。\n\n"
         f"当前问题：{question}\n\n审核资料：\n{knowledge_context}\n\n倾听上下文：\n{conversation_context}"
     )
-    return await ai_client.chat([], prompt), knowledge_chunks, personalization
+    return KnowledgeAnswer(await ai_client.chat([], prompt), knowledge_chunks, conversation_chunks, personalization, True)

@@ -156,7 +156,7 @@ async def chat(
         db.flush()
     else:
         db.commit()
-    cache_service.delete("analytics:overview")
+    cache_service.delete(f"analytics:overview:user:{current_user.id}")
 
     response = {
         "reply": reply,

@@ -35,6 +35,29 @@ export type Article = {
   created_at: string;
 };
 
+export type KnowledgeSource = {
+  id: string;
+  title: string;
+  source: string;
+  score: number;
+  source_type: "reviewed_knowledge" | "own_history" | "public_conversation";
+  kind: string;
+};
+
+export type KnowledgeAnswer = {
+  answer: string;
+  grounded: boolean;
+  refusal_reason: string;
+  personalization: { own_history: number; public_conversations: number };
+  source_summary: {
+    reviewed_knowledge: number;
+    own_history: number;
+    public_conversations: number;
+  };
+  citations: KnowledgeSource[];
+  context_sources: KnowledgeSource[];
+};
+
 export type PlazaMessage = {
   id: number;
   user_id: number;

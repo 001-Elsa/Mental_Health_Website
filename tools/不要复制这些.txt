@@ -1,0 +1,17 @@
+﻿这些不要复制到 Windows Server：
+
+.local-cache
+.git
+.pytest_cache
+__pycache__
+environment\venv
+frontend\node_modules
+frontend\dist
+*.log
+*.db
+mental_health_website_windows_deploy*.zip
+codes
+tools
+
+服务器部署只需要复制 codes 文件夹里的内容到：
+C:\mental_health_website

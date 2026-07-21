@@ -420,6 +420,18 @@ button, .primary-link, .secondary-link { border: 0; border-radius: 6px; backgrou
 .knowledge-answer > p { color: #f7faf8; font-size: 13px; line-height: 1.7; }
 .knowledge-answer > div { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .knowledge-answer span { padding: 5px 8px; border-radius: 4px; background: rgba(255,255,255,.09); color: #d4ddda; font-size: 10px; }
+.knowledge-answer.refused { border-left: 3px solid #e2b35e; padding-left: 13px; }
+.knowledge-refusal { display: block; margin-top: 10px; color: #ffe2a6; font-size: 12px; }
+.knowledge-source-summary { gap: 6px; margin: 0 0 8px; }
+.knowledge-source-summary span { background: rgba(255,255,255,.14); color: #e7f1ee; font-weight: 700; }
+.knowledge-source-list { display: grid !important; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px !important; margin-top: 12px !important; }
+.knowledge-source-list.context { grid-template-columns: repeat(2, minmax(0, 1fr)); padding-top: 8px; border-top: 1px solid rgba(255,255,255,.1); }
+.knowledge-source-card { display: grid !important; gap: 3px; min-width: 0; padding: 9px 10px !important; border: 1px solid rgba(255,255,255,.1); border-radius: 6px !important; background: rgba(255,255,255,.08) !important; white-space: normal !important; }
+.knowledge-source-card b { color: #fff; font-size: 10px; }
+.knowledge-source-card strong { overflow: hidden; color: #f7faf8; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.knowledge-source-card small { color: #b9c8c4; font-size: 9px; }
+.knowledge-source-card.own_history { border-color: rgba(142, 188, 255, .28); background: rgba(91, 118, 172, .25) !important; }
+.knowledge-source-card.public_conversation { border-color: rgba(145, 204, 177, .28); background: rgba(62, 122, 99, .22) !important; }
 .knowledge-context-note { display: block; margin-top: 10px; color: #9ecfc7; font-size: 10px; }
 .knowledge-generating { grid-column: 1 / -1; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 7px 11px; align-items: center; padding-top: 14px; border-top: 1px solid rgba(255,255,255,.12); color: #9fd4cb; }
 .knowledge-generating strong, .knowledge-generating span { display: block; }
@@ -453,6 +465,8 @@ button, .primary-link, .secondary-link { border: 0; border-radius: 6px; backgrou
 .content-empty span { font-size: 11px; }
 .recommendation-banner { min-height: 52px; display: flex; align-items: center; gap: 12px; margin-bottom: 14px; padding: 8px 12px; border-left: 3px solid var(--indigo); background: #eff1fa; color: #46558c; font-size: 12px; }
 .recommendation-banner-title { display: inline-flex; align-items: center; gap: 8px; }
+.profile-explain { flex: 1; min-width: 220px; display: flex; flex-wrap: wrap; gap: 6px; }
+.profile-explain span { padding: 5px 8px; border-radius: 999px; background: #fff; color: #4d5d91; font-size: 10px; font-weight: 700; }
 .recommendation-state-control select { min-width: 104px; padding: 7px 30px 7px 10px; border: 1px solid #aab5d3; border-radius: 6px; background: #fff; color: #26355f; font-weight: 700; }
 .recommendation-banner small { margin-left: auto; color: #60709b; }
 .article-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }

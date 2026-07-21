@@ -12,3 +12,7 @@ frontend/dist/
 frontend/.vite/
 
 .local-cache/
+*.log
+logs/
+codes/
+*.zip

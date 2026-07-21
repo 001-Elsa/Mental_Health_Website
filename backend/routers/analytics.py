@@ -1,35 +1,40 @@
 from datetime import datetime, timedelta
+
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
 from sqlalchemy import func
+from sqlalchemy.orm import Session
 
-from database.database import get_sync_db
-from database.models import User, MoodLog, Consultation
-from backend.auth import get_current_user, get_optional_user
+from backend.auth import get_current_user, require_admin
+from backend.schemas import ActivityPoint, AnalyticsOverview, TrendPoint
 from backend.services.cache import cache_service
-from backend.schemas import AnalyticsOverview, TrendPoint, ActivityPoint
+from database.database import get_sync_db
+from database.models import Consultation, MoodLog, User
 
-router = APIRouter(prefix="/api/analytics", tags=["数据分析"])
+router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
 
 @router.get("/overview", response_model=AnalyticsOverview)
-def get_overview(db: Session = Depends(get_sync_db)):
-    """获取仪表盘四个核心统计数"""
-    cached = cache_service.get_json("analytics:overview")
+def get_overview(
+    db: Session = Depends(get_sync_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return the current user's personal dashboard summary."""
+    cache_key = f"analytics:overview:user:{current_user.id}"
+    cached = cache_service.get_json(cache_key)
     if cached:
         return AnalyticsOverview(**cached)
-    total_users = db.query(func.count(User.id)).scalar() or 0
-    total_mood_logs = db.query(func.count(MoodLog.id)).scalar() or 0
-    total_consultations = db.query(func.count(Consultation.id)).scalar() or 0
-    avg_mood = db.query(func.avg(MoodLog.score)).scalar() or 0.0
+
+    total_mood_logs = db.query(func.count(MoodLog.id)).filter(MoodLog.user_id == current_user.id).scalar() or 0
+    total_consultations = db.query(func.count(Consultation.id)).filter(Consultation.user_id == current_user.id).scalar() or 0
+    avg_mood = db.query(func.avg(MoodLog.score)).filter(MoodLog.user_id == current_user.id).scalar() or 0.0
 
     result = AnalyticsOverview(
-        total_users=total_users,
+        total_users=1,
         total_mood_logs=total_mood_logs,
         total_consultations=total_consultations,
         avg_mood_score=round(avg_mood, 1),
     )
-    cache_service.set_json("analytics:overview", result.model_dump(), ttl_seconds=30)
+    cache_service.set_json(cache_key, result.model_dump(), ttl_seconds=30)
     return result
 
 
@@ -39,11 +44,12 @@ def get_mood_forecast(
     db: Session = Depends(get_sync_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Use a transparent linear trend baseline to forecast the next N daily mood scores."""
+    """Use a transparent linear trend baseline to forecast the current user's mood."""
     cache_key = f"analytics:mood-forecast:{current_user.id}:{days}"
     cached = cache_service.get_json(cache_key)
     if cached:
         return cached
+
     rows = (
         db.query(MoodLog)
         .filter(MoodLog.user_id == current_user.id)
@@ -79,7 +85,7 @@ def get_mood_forecast(
         "points": points,
         "sample_size": n,
         "model": "linear_regression_baseline",
-        "disclaimer": "趋势预测仅用于自我观察，不用于医疗诊断。",
+        "disclaimer": "Trend forecasting is for self-observation only and is not a medical diagnosis.",
     }
     cache_service.set_json(cache_key, result, 300)
     return result
@@ -88,39 +94,37 @@ def get_mood_forecast(
 @router.get("/mood-trend", response_model=list[TrendPoint])
 def get_mood_trend(
     days: int = Query(default=14, ge=1, le=90),
-    scope: str = Query(default="all", pattern=r"^(all|mine)$"),
+    scope: str = Query(default="mine", pattern=r"^(all|mine)$"),
     db: Session = Depends(get_sync_db),
-    current_user: User | None = Depends(get_optional_user),
+    current_user: User = Depends(get_current_user),
 ):
-    """获取全部用户或当前用户最近 N 天的每日平均情绪评分。"""
-    if scope == "mine" and current_user is None:
-        raise HTTPException(status_code=401, detail="登录后才能查看个人情绪趋势")
+    """Return personal trend by default; all-user trend is admin-only."""
+    if scope == "all" and current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only administrators can view all-user mood trends")
 
     cutoff_date = datetime.utcnow().date() - timedelta(days=days - 1)
-
     query = db.query(
         func.date(MoodLog.created_at).label("date"),
         func.round(func.avg(MoodLog.score), 1).label("avg_score"),
         func.count(MoodLog.id).label("count"),
     ).filter(func.date(MoodLog.created_at) >= cutoff_date.isoformat())
-    if scope == "mine" and current_user is not None:
+    if scope == "mine":
         query = query.filter(MoodLog.user_id == current_user.id)
+
     rows = (
         query.group_by(func.date(MoodLog.created_at))
         .order_by(func.date(MoodLog.created_at))
         .all()
     )
-
-    # 补全缺失日期
     result_map = {r.date: (float(r.avg_score), int(r.count)) for r in rows}
     result = []
-    for i in range(days):
-        d = cutoff_date + timedelta(days=i)
-        ds = d.isoformat()
-        point = result_map.get(ds)
+    for index in range(days):
+        day = cutoff_date + timedelta(days=index)
+        day_string = day.isoformat()
+        point = result_map.get(day_string)
         result.append(
             TrendPoint(
-                date=ds,
+                date=day_string,
                 avg_score=point[0] if point else None,
                 count=point[1] if point else 0,
             )
@@ -132,10 +136,10 @@ def get_mood_trend(
 def get_consultation_stats(
     days: int = Query(default=14, ge=1, le=90),
     db: Session = Depends(get_sync_db),
+    current_user: User = Depends(require_admin),
 ):
-    """获取最近 N 天的每日咨询数 + 参与用户数"""
+    """Return all-user consultation stats for the admin workspace."""
     cutoff_date = datetime.utcnow().date() - timedelta(days=days - 1)
-
     rows = (
         db.query(
             func.date(Consultation.created_at).label("date"),
@@ -148,18 +152,18 @@ def get_consultation_stats(
         .all()
     )
 
-    count_map = {r.date: r.count for r in rows}
-    user_map = {r.date: r.user_count for r in rows}
+    count_map = {row.date: row.count for row in rows}
+    user_map = {row.date: row.user_count for row in rows}
     result = []
-    for i in range(days):
-        d = cutoff_date + timedelta(days=i)
-        ds = d.isoformat()
+    for index in range(days):
+        day = cutoff_date + timedelta(days=index)
+        day_string = day.isoformat()
         result.append(
             TrendPoint(
-                date=ds,
+                date=day_string,
                 avg_score=None,
-                count=count_map.get(ds, 0),
-                user_count=user_map.get(ds, 0),
+                count=count_map.get(day_string, 0),
+                user_count=user_map.get(day_string, 0),
             )
         )
     return result
@@ -169,11 +173,11 @@ def get_consultation_stats(
 def get_user_activity(
     days: int = Query(default=14, ge=1, le=90),
     db: Session = Depends(get_sync_db),
+    current_user: User = Depends(require_admin),
 ):
-    """获取最近 N 天的每日用户活跃度（活跃/新增/日记/咨询）"""
+    """Return all-user activity stats for the admin workspace."""
     cutoff_date = datetime.utcnow().date() - timedelta(days=days - 1)
 
-    # 一、按天聚合各指标
     mood_day = (
         db.query(
             func.date(MoodLog.created_at).label("date"),
@@ -202,47 +206,43 @@ def get_user_activity(
         .all()
     )
 
-    diary_map = {r.date: r.diary_users for r in mood_day}
-    cons_map = {r.date: r.cons_users for r in cons_day}
-    new_map = {r.date: r.new_users for r in new_day}
+    diary_map = {row.date: row.diary_users for row in mood_day}
+    cons_map = {row.date: row.cons_users for row in cons_day}
+    new_map = {row.date: row.new_users for row in new_day}
 
-    # 活跃用户：每天日记用户∪咨询用户，需分别查出 uid 集合合并
-    # 为简单高效，按天批量查 uid 列表
     mood_uid_day = {}
-    for r in mood_day:
-        ds = r.date
+    for row in mood_day:
         uid_rows = (
             db.query(MoodLog.user_id)
-            .filter(func.date(MoodLog.created_at) == ds)
+            .filter(func.date(MoodLog.created_at) == row.date)
             .distinct()
             .all()
         )
-        mood_uid_day[ds] = {row[0] for row in uid_rows}
+        mood_uid_day[row.date] = {uid_row[0] for uid_row in uid_rows}
 
     cons_uid_day = {}
-    for r in cons_day:
-        ds = r.date
+    for row in cons_day:
         uid_rows = (
             db.query(Consultation.user_id)
-            .filter(func.date(Consultation.created_at) == ds)
+            .filter(func.date(Consultation.created_at) == row.date)
             .distinct()
             .all()
         )
-        cons_uid_day[ds] = {row[0] for row in uid_rows}
+        cons_uid_day[row.date] = {uid_row[0] for uid_row in uid_rows}
 
     result = []
-    for i in range(days):
-        d = cutoff_date + timedelta(days=i)
-        ds = d.isoformat()
-        mood_set = mood_uid_day.get(ds, set())
-        cons_set = cons_uid_day.get(ds, set())
+    for index in range(days):
+        day = cutoff_date + timedelta(days=index)
+        day_string = day.isoformat()
+        mood_set = mood_uid_day.get(day_string, set())
+        cons_set = cons_uid_day.get(day_string, set())
         result.append(
             ActivityPoint(
-                date=ds,
+                date=day_string,
                 active_users=len(mood_set | cons_set),
-                new_users=new_map.get(ds, 0),
-                diary_users=diary_map.get(ds, 0),
-                consultation_users=cons_map.get(ds, 0),
+                new_users=new_map.get(day_string, 0),
+                diary_users=diary_map.get(day_string, 0),
+                consultation_users=cons_map.get(day_string, 0),
             )
         )
     return result

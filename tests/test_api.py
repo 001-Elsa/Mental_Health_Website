@@ -1,4 +1,5 @@
 import os
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from itertools import count
 from pathlib import Path
@@ -34,6 +35,8 @@ from database.models import (  # noqa: E402
 from backend.services.conversation_memory import compress_history  # noqa: E402
 from backend.services.article_crawler import CrawlSource, CrawlTarget, discover_targets_from_html, parse_article_html  # noqa: E402
 from backend.services import article_service  # noqa: E402
+from backend.services.cache import CacheService  # noqa: E402
+from backend.services.risk_cases import RiskVersionConflict, claim_case  # noqa: E402
 from backend.services.rag import retrieve_conversation_context  # noqa: E402
 
 
@@ -87,7 +90,30 @@ def test_current_user_endpoint_and_spoofed_user_id_ignored():
     assert res.json()["user_id"] == user_id
 
 
-def test_mood_trend_switches_between_current_user_and_all_users():
+def test_refresh_token_rotates_and_logout_revokes_it():
+    suffix = next(user_counter)
+    phone = f"1380000{suffix:04d}"
+    nickname = f"刷新令牌用户{suffix}"
+    code = client.post("/api/auth/send-code", json={"phone": phone}).json()["dev_code"]
+    client.post(
+        "/api/auth/register",
+        json={"nickname": nickname, "phone": phone, "code": code, "password": "12345678"},
+    )
+    login = client.post("/api/auth/login", json={"nickname": nickname, "password": "12345678"})
+    assert login.status_code == 200
+    first_refresh = login.json()["refresh_token"]
+    rotated = client.post("/api/auth/refresh", json={"refresh_token": first_refresh})
+    assert rotated.status_code == 200
+    assert rotated.json()["refresh_token"] != first_refresh
+    assert client.post("/api/auth/refresh", json={"refresh_token": first_refresh}).status_code == 401
+    access = rotated.json()["token"]
+    assert client.get("/api/users/me", headers={"Authorization": f"Bearer {access}"}).status_code == 200
+    second_refresh = rotated.json()["refresh_token"]
+    assert client.post("/api/auth/logout", json={"refresh_token": second_refresh}).status_code == 200
+    assert client.post("/api/auth/refresh", json={"refresh_token": second_refresh}).status_code == 401
+
+
+def test_user_mode_analytics_are_personal_and_all_user_trends_are_admin_only():
     mine_headers = auth_headers()
     other_headers = auth_headers()
     client.post(
@@ -103,15 +129,25 @@ def test_mood_trend_switches_between_current_user_and_all_users():
 
     unauthorized = client.get("/api/analytics/mood-trend?days=14&scope=mine")
     mine = client.get("/api/analytics/mood-trend?days=14&scope=mine", headers=mine_headers)
-    all_users = client.get("/api/analytics/mood-trend?days=14&scope=all")
+    forbidden_all = client.get("/api/analytics/mood-trend?days=14&scope=all", headers=mine_headers)
+    personal_overview = client.get("/api/analytics/overview", headers=mine_headers)
 
     assert unauthorized.status_code == 401
     assert mine.status_code == 200
-    assert all_users.status_code == 200
+    assert forbidden_all.status_code == 403
+    assert personal_overview.status_code == 200
     mine_points = [point for point in mine.json() if point["count"] > 0]
-    all_points = [point for point in all_users.json() if point["count"] > 0]
     assert mine_points[-1]["avg_score"] == 2.0
     assert mine_points[-1]["count"] == 1
+    assert personal_overview.json()["total_mood_logs"] == 1
+    assert personal_overview.json()["total_users"] == 1
+
+    admin = admin_headers()
+    admin_all = client.get("/api/analytics/mood-trend?days=14&scope=all", headers=admin)
+    admin_activity = client.get("/api/analytics/user-activity?days=14", headers=admin)
+    assert admin_all.status_code == 200
+    assert admin_activity.status_code == 200
+    all_points = [point for point in admin_all.json() if point["count"] > 0]
     assert all_points[-1]["count"] >= 2
 
 
@@ -482,7 +518,7 @@ def test_consultation_updates_profile_and_recommends_exercise():
     assert response.json()["recommended_exercises"]
     profile = client.get("/api/users/me/profile", headers=headers)
     assert profile.status_code == 200
-    assert "学习与考试" in profile.json()["stressors"]
+    assert "学业" in profile.json()["stressors"]
     with SyncSessionLocal() as db:
         assert db.query(UserProfile).filter(UserProfile.user_id == user_id).first() is not None
 
@@ -670,6 +706,93 @@ def test_risk_case_rejects_invalid_state_jump():
         ).count()
         assert audit_count_after == audit_count_before
         assert db.query(UserNotification).filter(UserNotification.user_id == event["user_id"]).count() == 0
+
+
+def test_twenty_concurrent_claims_have_exactly_one_winner():
+    with SyncSessionLocal() as db:
+        event = RiskEvent(
+            user_id=999_001,
+            conversation_id=f"concurrent-{uuid4().hex}",
+            event_type="conversation",
+            level="high",
+            score=80,
+            status="pending",
+            version=0,
+            due_at=datetime.utcnow() + timedelta(minutes=5),
+        )
+        db.add(event)
+        db.commit()
+        event_id = event.id
+
+    def attempt(actor_id: int) -> bool:
+        with SyncSessionLocal() as db:
+            try:
+                claim_case(db, event_id=event_id, actor_id=actor_id, expected_version=0)
+                db.commit()
+                return True
+            except RiskVersionConflict:
+                return False
+            except Exception:
+                # SQLite may serialize a loser as a temporary lock error; it is still not a winner.
+                db.rollback()
+                return False
+
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        results = list(executor.map(attempt, range(10_000, 10_020)))
+
+    assert sum(results) == 1
+    with SyncSessionLocal() as db:
+        claimed = db.query(RiskEvent).filter(RiskEvent.id == event_id).one()
+        assert claimed.status == "claimed"
+        assert claimed.version == 1
+        assert db.query(RiskAction).filter(
+            RiskAction.risk_event_id == event_id,
+            RiskAction.action == "claimed",
+        ).count() == 1
+
+
+def test_article_cache_negative_value_prevents_repeated_database_fallback():
+    service = CacheService()
+    calls = 0
+
+    def missing_loader():
+        nonlocal calls
+        calls += 1
+        return None
+
+    assert service.get_or_load_json("article:detail:999999", missing_loader, ttl_seconds=60) is None
+    assert service.get_or_load_json("article:detail:999999", missing_loader, ttl_seconds=60) is None
+    assert calls == 1
+
+
+def test_streaming_chat_emits_sse_and_persists_after_completion():
+    headers = auth_headers()
+    conversation_id = f"stream-{uuid4().hex[:12]}"
+    response = client.post(
+        "/api/consult/chat/stream",
+        json={"conversation_id": conversation_id, "message": "今天有点累", "visibility": "私人"},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert "event: meta" in response.text
+    assert "event: token" in response.text
+    assert "event: done" in response.text
+    with SyncSessionLocal() as db:
+        assert db.query(ChatMessage).filter(ChatMessage.conversation_id == conversation_id).count() == 2
+
+
+def test_prometheus_endpoint_exposes_api_ai_cache_and_risk_metrics():
+    response = client.get("/metrics")
+    assert response.status_code == 200
+    body = response.text
+    for metric in (
+        "mental_health_http_requests_total",
+        "mental_health_ai_requests_total",
+        "mental_health_cache_operations_total",
+        "mental_health_risk_cases_total",
+    ):
+        assert metric in body
 
 
 def test_community_media_upload_and_media_only_share():
