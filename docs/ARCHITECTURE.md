@@ -1,41 +1,59 @@
-# 系统架构与版本能力
+# 系统架构
 
-## 请求链路
+## 架构定位
+
+系统是一个模块化单体应用，配套独立 SLA Worker、PostgreSQL、Redis 和监控组件。它没有服务发现、分布式事务或跨服务调用链治理，因此不包装成微服务。
 
 ```mermaid
-flowchart LR
-    UI[React 学生端 / 管理端] --> API[FastAPI API]
-    API --> AUTH[JWT + RBAC]
-    API --> DB[(PostgreSQL / SQLite)]
-    API --> CACHE[(Redis)]
-    API --> RISK[风险识别引擎]
-    API --> RAG[RAG 检索层]
-    RAG --> KB[(知识文档 + 审核文章)]
-    RAG --> LLM[DeepSeek]
-    RISK --> QUEUE[管理员干预队列]
+flowchart TB
+    Browser["React / TypeScript"] --> Nginx["Nginx：TLS 终止、安全头、静态资源"]
+    Nginx --> API["FastAPI 模块化单体"]
+    Browser -. "60 秒 WebSocket Ticket" .-> API
+
+    API --> Auth["认证：内存 Access Token + HttpOnly Refresh Cookie"]
+    API --> Consult["AI 对话：摘要、画像、幂等、SSE"]
+    API --> RAG["可信 RAG：审核来源、引用、拒答"]
+    API --> Risk["风险案例：合并、升级、状态机、乐观锁"]
+    API --> Community["社区：审核、归属校验、媒体生命周期"]
+
+    Auth --> DB[(PostgreSQL)]
+    Consult --> DB
+    RAG --> DB
+    Risk --> DB
+    Community --> DB
+    API --> Redis[(Redis Cache / Rate Limit)]
+    Consult --> Provider["DeepSeek，可安全降级"]
+
+    SLA["独立 SLA Worker"] --> DB
+    Prometheus --> API
+    Prometheus --> PgExporter["PostgreSQL Exporter"]
+    Prometheus --> RedisExporter["Redis Exporter"]
+    Grafana --> Prometheus
 ```
 
-## 四个版本
+## 关键边界
 
-| 版本 | 能力 | 可验证入口 |
-| --- | --- | --- |
-| V1 | JWT 登录、DeepSeek 对话、情绪记录、文章社区、Docker Compose | `/docs`、学生端六个页面 |
-| V2 | 风险评分、干预队列、内容审核、运营分析、结构化摘要与标签 | `/api/admin/*`、运营工作台 |
-| V3 | Redis 缓存与限流、RBAC、请求日志、统一错误、CI、压测 | `cache.py`、GitHub Actions、`tests/load` |
-| V4 | RAG、历史压缩、趋势预测、可解释推荐、内容安全 | `/api/knowledge/*`、`/api/analytics/mood-forecast` |
+- 浏览器永远无法读取 Refresh Token；Access Token 只存在于 JS 内存。
+- RAG 引用仅来自已审核知识文档和已发布文章。用户历史和匿名公开经历只能帮助归纳上下文，不能作为可引用事实。
+- 高风险判断的确定性规则不依赖模型；模型只允许升级风险等级。
+- Redis 保存可丢失的短期状态。AI 幂等结果、风险案例和审计记录保存于数据库。
+- 多实例生产环境必须使用共享 Redis；内存缓存只用于本地故障降级。
 
-## 安全边界
+## 可靠性策略
 
-- 平台提供心理支持和资源导航，不提供诊断或治疗结论。
-- 高风险信息会创建风险事件，只有管理员可查看和处置。
-- AI 会话默认私人；公开内容仍需经过社区安全规则。
-- 管理端手机号脱敏展示，写接口由 JWT 和 RBAC 控制。
-- RAG 回答携带检索来源；资料不足时明确拒答。
+| 故障 | 处理 |
+| --- | --- |
+| AI 连接失败、超时、429、5xx | 有界重试、指数退避；耗尽后安全回复 |
+| Redis socket 故障 | 5 秒熔断，直接走内存/数据库，避免每次请求等待超时 |
+| 浏览器重复提交 AI 请求 | 数据库幂等键占位并复用已完成结果 |
+| 两名管理员同时领取案例 | `id + version` 条件 UPDATE，仅一个请求成功 |
+| API Worker 重启 | 会话、案例、幂等和通知均在数据库恢复 |
+| SLA Worker 重复扫描 | 每个超时案例只追加一次对应升级记录和通知 |
 
-## 算法说明
+## 验证入口
 
-- 风险识别：可解释规则评分，结合文本信号与近期情绪下降趋势；不是医学诊断模型。
-- 历史压缩：保留用户主题与主要情绪，不存储模型思维过程；旧轮次摘要与最近 10 轮共同进入上下文。
-- 情绪预测：线性回归基线，输出样本量、置信度和免责声明，预测值限制在 1-10。
-- 推荐：近期情绪标签映射内容类别，再以热度排序，并向前端返回推荐原因。
-- RAG：中文字符与二元词项检索，通过相关度排序后将前 4 条资料交给 DeepSeek 生成有依据的回答。
+- 业务、安全和并发：`pytest -q`
+- AI/RAG 安全底线：`python evals/run_evals.py`
+- 浏览器核心链路：`pytest tests/e2e -m e2e -q`
+- 性能原始样本：`python tests/load/run_suite.py`
+- Redis 故障实验：`scripts/benchmark-cache-failure.ps1`

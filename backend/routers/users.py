@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 
 from backend.auth import get_current_user, hash_password, verify_password
+from backend.core.time import utc_now
 from backend.core.config import get_settings
 from backend.repositories import users
 from backend.services.cache import cache_service
@@ -155,7 +156,7 @@ def change_password(
     db.query(RefreshToken).filter(
         RefreshToken.user_id == current_user.id,
         RefreshToken.revoked_at.is_(None),
-    ).update({"revoked_at": datetime.utcnow()}, synchronize_session=False)
+    ).update({"revoked_at": utc_now()}, synchronize_session=False)
     db.commit()
     return {"ok": True, "message": "密码已更新，请重新登录"}
 
@@ -289,7 +290,7 @@ def read_notification(
     if not notification:
         raise HTTPException(status_code=404, detail="通知不存在")
     if notification.read_at is None:
-        notification.read_at = datetime.utcnow()
+        notification.read_at = utc_now()
         db.commit()
     return {"ok": True, "read_at": notification.read_at}
 
@@ -302,6 +303,6 @@ def read_all_notifications(
     updated = db.query(UserNotification).filter(
         UserNotification.user_id == current_user.id,
         UserNotification.read_at.is_(None),
-    ).update({"read_at": datetime.utcnow()}, synchronize_session=False)
+    ).update({"read_at": utc_now()}, synchronize_session=False)
     db.commit()
     return {"ok": True, "updated": updated}

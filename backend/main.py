@@ -1,4 +1,7 @@
 import logging
+import ipaddress
+import re
+import secrets
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -76,7 +79,12 @@ def health_check():
 
 @app.middleware("http")
 async def request_context(request: Request, call_next):
-    request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+    supplied_request_id = request.headers.get("X-Request-ID", "")
+    request_id = (
+        supplied_request_id
+        if re.fullmatch(r"[A-Za-z0-9._-]{1,64}", supplied_request_id)
+        else str(uuid.uuid4())
+    )
     request.state.request_id = request_id
     started = time.perf_counter()
     HTTP_IN_PROGRESS.labels(request.method).inc()
@@ -104,7 +112,17 @@ async def request_context(request: Request, call_next):
 
 
 @app.get("/metrics", include_in_schema=False)
-def metrics():
+def metrics(request: Request):
+    expected = get_settings().metrics_token
+    supplied = request.headers.get("Authorization", "")
+    peer = request.client.host if request.client else ""
+    try:
+        internal_peer = ipaddress.ip_address(peer).is_private or ipaddress.ip_address(peer).is_loopback
+    except ValueError:
+        internal_peer = False
+    token_ok = bool(expected) and secrets.compare_digest(supplied, f"Bearer {expected}")
+    if get_settings().environment == "production" and not (internal_peer or token_ok):
+        raise HTTPException(status_code=404, detail="Not Found")
     if get_settings().environment == "production":
         registry = CollectorRegistry()
         multiprocess.MultiProcessCollector(registry)

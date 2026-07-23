@@ -5,6 +5,7 @@ from sqlalchemy import Numeric, func
 from sqlalchemy.orm import Session
 
 from backend.auth import get_current_user, require_admin
+from backend.core.time import utc_now
 from backend.schemas import ActivityPoint, AnalyticsOverview, TrendPoint
 from backend.services.cache import cache_service
 from database.database import get_sync_db
@@ -76,7 +77,7 @@ def get_mood_forecast(
     intercept = y_mean - slope * x_mean
     residual = sum((score - (intercept + slope * index)) ** 2 for index, score in enumerate(scores)) / n
     confidence = min(0.9, max(0.15, (n / 14) * (1 / (1 + residual)))) if n >= 3 else 0.15
-    today = datetime.utcnow().date()
+    today = utc_now().date()
     points = [
         {
             "date": (today + timedelta(days=offset)).isoformat(),
@@ -107,7 +108,7 @@ def get_mood_trend(
     if scope == "all" and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Only administrators can view all-user mood trends")
 
-    cutoff_date = datetime.utcnow().date() - timedelta(days=days - 1)
+    cutoff_date = utc_now().date() - timedelta(days=days - 1)
     query = db.query(
         func.date(MoodLog.created_at).label("date"),
         # PostgreSQL only accepts the two-argument round() overload for
@@ -146,7 +147,7 @@ def get_consultation_stats(
     current_user: User = Depends(require_admin),
 ):
     """Return all-user consultation stats for the admin workspace."""
-    cutoff_date = datetime.utcnow().date() - timedelta(days=days - 1)
+    cutoff_date = utc_now().date() - timedelta(days=days - 1)
     rows = (
         db.query(
             func.date(Consultation.created_at).label("date"),
@@ -183,7 +184,7 @@ def get_user_activity(
     current_user: User = Depends(require_admin),
 ):
     """Return all-user activity stats for the admin workspace."""
-    cutoff_date = datetime.utcnow().date() - timedelta(days=days - 1)
+    cutoff_date = utc_now().date() - timedelta(days=days - 1)
 
     mood_day = (
         db.query(

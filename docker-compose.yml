@@ -40,13 +40,14 @@ services:
       UVICORN_WORKERS: 4
       ACCESS_TOKEN_EXPIRE_MINUTES: 15
       REFRESH_TOKEN_EXPIRE_DAYS: 30
+      METRICS_TOKEN: ${METRICS_TOKEN}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - community_uploads:/app/uploads
     healthcheck:
@@ -65,6 +66,7 @@ services:
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-mental}:${POSTGRES_PASSWORD:-mental}@postgres:5432/${POSTGRES_DB:-mental_health}
       REDIS_URL: redis://redis:6379/0
       RISK_SLA_SCAN_SECONDS: 30
+      METRICS_TOKEN: ${METRICS_TOKEN}
     depends_on:
       postgres:
         condition: service_healthy

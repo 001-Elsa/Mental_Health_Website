@@ -40,14 +40,14 @@ export default function AdminPage() {
   const [followUpAt, setFollowUpAt] = useState("");
   const qc = useQueryClient();
   const overview = useQuery({ queryKey: ["admin-overview"], queryFn: adminApi.overview });
-  const trends = useQuery({ queryKey: ["admin-trends"], queryFn: adminApi.trends });
-  const risks = useQuery({ queryKey: ["admin-risks"], queryFn: adminApi.risks });
-  const reports = useQuery({ queryKey: ["admin-reports"], queryFn: adminApi.reports });
-  const moderation = useQuery({ queryKey: ["admin-moderation"], queryFn: adminApi.moderation });
-  const users = useQuery({ queryKey: ["admin-users"], queryFn: adminApi.users });
-  const words = useQuery({ queryKey: ["admin-words"], queryFn: adminApi.words });
-  const articles = useQuery({ queryKey: ["admin-articles"], queryFn: adminApi.articles });
-  const auditLogs = useQuery({ queryKey: ["admin-audit-logs"], queryFn: adminApi.auditLogs });
+  const trends = useQuery({ queryKey: ["admin-trends"], queryFn: adminApi.trends, enabled: tab === "operations" });
+  const risks = useQuery({ queryKey: ["admin-risks"], queryFn: adminApi.risks, enabled: tab === "safety" });
+  const reports = useQuery({ queryKey: ["admin-reports"], queryFn: adminApi.reports, enabled: tab === "safety" });
+  const moderation = useQuery({ queryKey: ["admin-moderation"], queryFn: adminApi.moderation, enabled: tab === "safety" });
+  const users = useQuery({ queryKey: ["admin-users"], queryFn: adminApi.users, enabled: tab === "operations" });
+  const words = useQuery({ queryKey: ["admin-words"], queryFn: adminApi.words, enabled: tab === "operations" });
+  const articles = useQuery({ queryKey: ["admin-articles"], queryFn: adminApi.articles, enabled: tab === "operations" });
+  const auditLogs = useQuery({ queryKey: ["admin-audit-logs"], queryFn: adminApi.auditLogs, enabled: tab === "operations" });
   const timeline = useQuery({
     queryKey: ["admin-risk-timeline", selectedRiskId],
     queryFn: () => adminApi.riskTimeline(selectedRiskId!),

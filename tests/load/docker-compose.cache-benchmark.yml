@@ -1,0 +1,8 @@
+services:
+  api:
+    environment:
+      # Values are generated in-process by benchmark-cache-failure.ps1. They
+      # override .env without committing benchmark credentials to the repo.
+      SECRET_KEY: ${BENCHMARK_SECRET_KEY:?BENCHMARK_SECRET_KEY is required}
+      METRICS_TOKEN: ${BENCHMARK_METRICS_TOKEN:?BENCHMARK_METRICS_TOKEN is required}
+      UVICORN_WORKERS: 1

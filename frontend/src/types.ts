@@ -14,7 +14,6 @@ export type User = {
 export type AuthPayload = {
   token: string;
   access_token?: string;
-  refresh_token?: string;
   expires_in?: number;
   user: User;
 };

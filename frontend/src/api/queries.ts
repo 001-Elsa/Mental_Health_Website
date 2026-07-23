@@ -116,6 +116,7 @@ export const discussionsApi = {
     return api<{ url: string; media_type: "image" | "audio" }>("/api/discussions/media", { method: "POST", body: form });
   },
   plaza: () => api<PlazaMessage[]>("/api/discussions/plaza", { auth: false }),
+  plazaTicket: () => api<{ ticket: string }>("/api/discussions/plaza/ws-ticket", { method: "POST" }),
   sendToPlaza: (payload: { content: string; image_url?: string; audio_url?: string }) =>
     api<PlazaMessage>("/api/discussions/plaza", { method: "POST", body: toBody(payload) }),
   mine: () => api<Discussion[]>("/api/discussions/mine"),

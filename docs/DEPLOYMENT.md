@@ -15,8 +15,10 @@
 
 GitHub Actions 启动 PostgreSQL 16 与 Redis 7，并先执行 `alembic upgrade head`，随后运行 API 测试。测试覆盖 PostgreSQL 下的并发风险案例领取、Redis 正常缓存路径，以及 Redis 故障熔断和恢复的故障注入路径。
 
-这不是生产认证：CI 不会启动 4 worker 的 Docker API 容器，不会调用真实 AI 提供商，也不替代长时间负载测试、外部网络故障演练或安全渗透测试。AI 目前覆盖无密钥的安全降级；针对上游超时、限流与异常响应的系统化 Mock/故障注入仍是后续工作，真实密钥只应在受控环境使用。
+CI 还会运行不调用外部模型的 AI/RAG 离线质量门槛、Vitest 前端单元测试、生产构建，以及使用 Chromium 的 Playwright 登录与会话恢复链路。
+
+这不是生产认证：CI 不会启动 4 worker 的 Docker API 容器，不会调用真实 AI 提供商，也不替代长时间负载测试、外部网络故障演练或安全渗透测试。自动化测试已覆盖无密钥降级以及上游超时、429 和异常响应的 Mock 故障注入；真实供应商和真实密钥仍只应在受控环境验证。
 
 ## 性能边界
 
-当前压测可用于比较缓存与故障熔断策略，不用于承诺容量。Windows Docker Desktop 基线中，文章列表在并发 50、1000 次请求下为 101.95 QPS、P95 1412ms；Redis 故障熔断后为 62.69 QPS，熔断前为 7.52 QPS。详细条件与数据见 [PERFORMANCE.md](PERFORMANCE.md)。
+当前压测可用于比较缓存与故障熔断策略，不用于承诺容量。Windows Docker Desktop 的当前故障注入中，首次 Redis 失败请求耗时 4044ms；随后 5 秒熔断窗口内 100 个请求的 P50 为 334ms、P95 为 799ms，全部成功，最终恢复检查确认 Redis 与数据库正常。详细条件和逐请求数据见 [PERFORMANCE.md](PERFORMANCE.md)。

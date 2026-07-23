@@ -6,6 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from database.models import IdempotencyRecord
+from backend.core.time import utc_now
 
 
 class IdempotencyInProgress(Exception):
@@ -27,8 +28,8 @@ def begin_operation(
     if existing:
         if existing.status == "completed" and existing.response_json:
             return existing, json.loads(existing.response_json)
-        updated_at = existing.updated_at or existing.created_at or datetime.utcnow()
-        if datetime.utcnow() - updated_at < timedelta(minutes=5):
+        updated_at = existing.updated_at or existing.created_at or utc_now()
+        if utc_now() - updated_at < timedelta(minutes=5):
             raise IdempotencyInProgress
         existing.status = "processing"
         existing.response_json = ""
@@ -60,6 +61,5 @@ def begin_operation(
 def complete_operation(db: Session, record: IdempotencyRecord, response: dict[str, Any]) -> None:
     record.status = "completed"
     record.response_json = json.dumps(response, ensure_ascii=False, separators=(",", ":"))
-    record.updated_at = datetime.utcnow()
+    record.updated_at = utc_now()
     db.commit()
-

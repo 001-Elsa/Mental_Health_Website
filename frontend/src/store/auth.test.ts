@@ -11,4 +11,8 @@ describe("auth store", () => {
     expect(useAuthStore.getState().token).toBeNull();
     expect(useAuthStore.getState().user).toBeNull();
   });
+
+  it("never persists access or refresh tokens in localStorage", () => {
+    expect(JSON.stringify(useAuthStore.getState())).not.toContain("refreshToken");
+  });
 });

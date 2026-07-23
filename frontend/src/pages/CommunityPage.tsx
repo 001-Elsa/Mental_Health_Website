@@ -112,6 +112,7 @@ export default function CommunityPage() {
 
 function RealtimePlaza({ onFeedback }: { onFeedback: (message: string) => void }) {
   const qc = useQueryClient();
+  const token = useAuthStore((state) => state.token);
   const [media, setMedia] = useState<CommunityMediaValue>(emptyMedia);
   const feedRef = useRef<HTMLDivElement>(null);
   const messages = useQuery({ queryKey: ["plaza-messages"], queryFn: discussionsApi.plaza, refetchInterval: 5000 });
@@ -125,17 +126,25 @@ function RealtimePlaza({ onFeedback }: { onFeedback: (message: string) => void }
   });
 
   useEffect(() => {
+    if (!token) return;
+    let socket: WebSocket | null = null;
+    let heartbeat = 0;
+    let cancelled = false;
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const socket = new WebSocket(`${protocol}//${window.location.host}/api/discussions/plaza/ws`);
-    socket.onmessage = () => qc.invalidateQueries({ queryKey: ["plaza-messages"] });
-    const heartbeat = window.setInterval(() => {
-      if (socket.readyState === WebSocket.OPEN) socket.send("ping");
-    }, 20000);
+    void discussionsApi.plazaTicket().then(({ ticket }) => {
+      if (cancelled) return;
+      socket = new WebSocket(`${protocol}//${window.location.host}/api/discussions/plaza/ws?ticket=${encodeURIComponent(ticket)}`);
+      socket.onmessage = () => qc.invalidateQueries({ queryKey: ["plaza-messages"] });
+      heartbeat = window.setInterval(() => {
+        if (socket?.readyState === WebSocket.OPEN) socket.send("ping");
+      }, 20000);
+    }).catch(() => onFeedback("实时连接暂不可用，消息列表仍会定时刷新。"));
     return () => {
+      cancelled = true;
       window.clearInterval(heartbeat);
-      socket.close();
+      socket?.close();
     };
-  }, [qc]);
+  }, [onFeedback, qc, token]);
 
   useEffect(() => {
     const feed = feedRef.current;

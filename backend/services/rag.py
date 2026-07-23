@@ -39,7 +39,11 @@ def _tokens(text: str) -> list[str]:
     words = re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]", lowered)
     chinese = [token for token in words if "\u4e00" <= token <= "\u9fff"]
     bigrams = ["".join(chinese[index:index + 2]) for index in range(len(chinese) - 1)]
-    return words + bigrams
+    latin_words = [token for token in words if not ("\u4e00" <= token <= "\u9fff")]
+    # Chinese single-character overlap produces many false positives (for
+    # example an unrelated question matching only “的” or “相”). Bigrams keep
+    # the deterministic baseline useful until an embedding reranker is added.
+    return latin_words + (bigrams if bigrams else chinese)
 
 
 def _score(query_tokens: list[str], text: str) -> float:

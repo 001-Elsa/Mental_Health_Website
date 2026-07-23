@@ -1,17 +1,19 @@
 import json
 import hashlib
-import random
+import ipaddress
 import re
+import secrets
 import urllib.error
 import urllib.request
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 
 from database.database import get_sync_db
 from backend.repositories import users
 from backend.core.config import get_settings
+from backend.core.time import utc_now
 from backend.services.cache import cache_service
 from backend.services.auth_service import register_user, login_user
 from backend.auth import create_access_token, create_refresh_token, decode_access_token
@@ -39,7 +41,7 @@ class LoginReq(BaseModel):
 
 
 class RefreshReq(BaseModel):
-    refresh_token: str = Field(min_length=32, max_length=4096)
+    refresh_token: str | None = Field(default=None, min_length=32, max_length=4096)
 
 
 def _token_hash(token: str) -> str:
@@ -50,6 +52,31 @@ def _issue_refresh_token(db: Session, user: User) -> str:
     token, expires_at = create_refresh_token(user_id=user.id, token_version=user.token_version)
     db.add(RefreshToken(user_id=user.id, token_hash=_token_hash(token), expires_at=expires_at))
     return token
+
+
+def _set_refresh_cookie(response: Response, token: str, *, persistent: bool = True) -> None:
+    settings = get_settings()
+    response.set_cookie(
+        key="mh_refresh",
+        value=token,
+        max_age=settings.refresh_token_expire_days * 86400 if persistent else None,
+        httponly=True,
+        secure=settings.environment == "production",
+        samesite="lax",
+        path="/api/auth",
+    )
+
+
+def _client_ip(request: Request) -> str:
+    peer = request.client.host if request.client else ""
+    forwarded = request.headers.get("X-Real-IP", "")
+    try:
+        peer_is_proxy = ipaddress.ip_address(peer).is_private or ipaddress.ip_address(peer).is_loopback
+        if peer_is_proxy and forwarded:
+            return str(ipaddress.ip_address(forwarded))
+    except ValueError:
+        pass
+    return peer or "unknown"
 
 
 # ====== API ======
@@ -66,7 +93,7 @@ def send_code(payload: SendCodeReq):
     if not re.fullmatch(r"1[3-9]\d{9}", phone):
         raise HTTPException(status_code=400, detail="请输入有效的手机号")
 
-    code = str(random.randint(1000, 9999))
+    code = f"{secrets.randbelow(1_000_000):06d}"
     sms_configured = bool(get_settings().sms_webhook_url)
     if not sms_configured and get_settings().environment != "development":
         raise HTTPException(status_code=503, detail="短信服务尚未配置")
@@ -119,14 +146,17 @@ def send_sms_code(phone: str, code: str) -> None:
 
 
 @router.post("/register")
-def register(payload: RegisterReq, db: Session = Depends(get_sync_db)):
+def register(payload: RegisterReq, request: Request, db: Session = Depends(get_sync_db)):
     """注册新用户"""
     phone = payload.phone.strip()
     code = payload.code.strip()
 
     # 校验验证码
     saved_code = cache_service.get_code(phone)
-    if not saved_code or saved_code != code:
+    attempt_key = f"rate:register_code:{phone}:{_client_ip(request)}"
+    if cache_service.increment(attempt_key, 10 * 60) > 6:
+        raise HTTPException(status_code=429, detail="验证码尝试次数过多，请稍后重试")
+    if not saved_code or not secrets.compare_digest(saved_code, code):
         raise HTTPException(status_code=400, detail="验证码错误或已过期")
 
     # 检查昵称是否已被占用
@@ -140,29 +170,34 @@ def register(payload: RegisterReq, db: Session = Depends(get_sync_db)):
     user = register_user(db, nickname=payload.nickname, phone=phone, password=payload.password)
     # 清除验证码
     cache_service.delete_code(phone)
+    cache_service.delete(attempt_key)
 
     return {"ok": True, "user_id": user.id, "nickname": user.nickname}
 
 
 @router.post("/login")
-def login(payload: LoginReq, db: Session = Depends(get_sync_db)):
-    rate_key = f"rate_limit:login_fail:{payload.nickname.strip().lower()}"
-    if int(cache_service.get(rate_key) or 0) >= 5:
+def login(payload: LoginReq, request: Request, response: Response, db: Session = Depends(get_sync_db)):
+    nickname = payload.nickname.strip().lower()
+    ip = _client_ip(request)
+    pair_key = f"rate:login_pair:{nickname}:{ip}"
+    ip_key = f"rate:login_ip:{ip}"
+    if int(cache_service.get(pair_key) or 0) >= 8 or int(cache_service.get(ip_key) or 0) >= 40:
         raise HTTPException(status_code=429, detail="登录失败次数过多，请 15 分钟后再试")
     result = login_user(db, nickname=payload.nickname, password=payload.password)
     if not result:
-        cache_service.increment(rate_key, 15 * 60)
+        cache_service.increment(pair_key, 15 * 60)
+        cache_service.increment(ip_key, 15 * 60)
         raise HTTPException(status_code=401, detail="昵称或密码错误")
     user, token = result
-    cache_service.delete(rate_key)
+    cache_service.delete(pair_key)
     refresh_token = _issue_refresh_token(db, user)
     db.commit()
+    _set_refresh_cookie(response, refresh_token, persistent=payload.remember_me)
 
     return {
         "ok": True,
         "token": token,
         "access_token": token,
-        "refresh_token": refresh_token,
         "expires_in": get_settings().access_token_expire_minutes * 60,
         "user": {
             "id": user.id,
@@ -179,38 +214,55 @@ def login(payload: LoginReq, db: Session = Depends(get_sync_db)):
 
 
 @router.post("/refresh")
-def refresh_tokens(payload: RefreshReq, db: Session = Depends(get_sync_db)):
-    claims = decode_access_token(payload.refresh_token)
+def refresh_tokens(
+    response: Response,
+    payload: RefreshReq | None = None,
+    mh_refresh: str | None = Cookie(default=None),
+    db: Session = Depends(get_sync_db),
+):
+    refresh_token = mh_refresh or (payload.refresh_token if payload else None)
+    if not refresh_token:
+        raise HTTPException(status_code=401, detail="缺少刷新令牌")
+    claims = decode_access_token(refresh_token)
     if not claims or claims.get("type") != "refresh":
         raise HTTPException(status_code=401, detail="刷新令牌无效")
     record = db.query(RefreshToken).filter(
-        RefreshToken.token_hash == _token_hash(payload.refresh_token)
+        RefreshToken.token_hash == _token_hash(refresh_token)
     ).first()
-    if not record or record.revoked_at or record.expires_at <= datetime.utcnow():
+    if not record or record.revoked_at or record.expires_at <= utc_now():
         raise HTTPException(status_code=401, detail="刷新令牌已失效或被撤销")
     user = db.query(User).filter(User.id == int(claims.get("user_id", 0))).first()
     if not user or int(claims.get("ver", -1)) != user.token_version or user.id != record.user_id:
         raise HTTPException(status_code=401, detail="刷新令牌已失效")
     new_refresh = _issue_refresh_token(db, user)
-    record.revoked_at = datetime.utcnow()
+    record.revoked_at = utc_now()
     record.replaced_by_hash = _token_hash(new_refresh)
     access = create_access_token({"user_id": user.id, "nickname": user.nickname, "ver": user.token_version})
     db.commit()
+    _set_refresh_cookie(response, new_refresh, persistent=False)
     return {
         "token": access,
         "access_token": access,
-        "refresh_token": new_refresh,
         "expires_in": get_settings().access_token_expire_minutes * 60,
     }
 
 
 @router.post("/logout")
-def logout(payload: RefreshReq, db: Session = Depends(get_sync_db)):
+def logout(
+    response: Response,
+    payload: RefreshReq | None = None,
+    mh_refresh: str | None = Cookie(default=None),
+    db: Session = Depends(get_sync_db),
+):
+    refresh_token = mh_refresh or (payload.refresh_token if payload else None)
+    response.delete_cookie("mh_refresh", path="/api/auth")
+    if not refresh_token:
+        return {"ok": True}
     record = db.query(RefreshToken).filter(
-        RefreshToken.token_hash == _token_hash(payload.refresh_token),
+        RefreshToken.token_hash == _token_hash(refresh_token),
         RefreshToken.revoked_at.is_(None),
     ).first()
     if record:
-        record.revoked_at = datetime.utcnow()
+        record.revoked_at = utc_now()
         db.commit()
     return {"ok": True}

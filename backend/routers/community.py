@@ -1,3 +1,7 @@
+import asyncio
+import re
+import time
+from collections import Counter
 from pathlib import Path
 from uuid import uuid4
 
@@ -5,10 +9,11 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, 
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from backend.auth import get_current_user, get_optional_user
+from backend.auth import create_websocket_token, decode_access_token, get_current_user, get_optional_user
+from backend.core.config import get_settings
 from backend.schemas import DiscussionCreate, DiscussionOut, PlazaMessageCreate, PlazaMessageOut, ReplyCreate, ReplyOut
 from backend.services.content_moderation import moderate_content
-from database.database import get_sync_db
+from database.database import SyncSessionLocal, get_sync_db
 from database.models import Discussion, DiscussionLike, PlazaMessage, Reply, Report, User
 
 router = APIRouter(prefix="/api/discussions", tags=["社区互助"])
@@ -27,18 +32,48 @@ MEDIA_TYPES = {
     "audio/mp4": ("audio", ".m4a", 12 * 1024 * 1024),
     "audio/aac": ("audio", ".aac", 12 * 1024 * 1024),
 }
+IMAGE_SUFFIXES = {".jpg", ".png", ".webp", ".gif"}
+AUDIO_SUFFIXES = {".webm", ".ogg", ".mp3", ".wav", ".m4a", ".aac"}
+UPLOAD_NAME_RE = re.compile(r"^(?P<user_id>\d+)-[0-9a-f]{32}(?P<suffix>\.[a-z0-9]+)$")
+
+
+def _valid_signature(content_type: str, header: bytes) -> bool:
+    checks = {
+        "image/jpeg": header.startswith(b"\xff\xd8\xff"),
+        "image/png": header.startswith(b"\x89PNG\r\n\x1a\n"),
+        "image/webp": header.startswith(b"RIFF") and header[8:12] == b"WEBP",
+        "image/gif": header.startswith((b"GIF87a", b"GIF89a")),
+        "audio/webm": header.startswith(b"\x1a\x45\xdf\xa3"),
+        "audio/ogg": header.startswith(b"OggS"),
+        "audio/mpeg": header.startswith(b"ID3") or (len(header) >= 2 and header[0] == 0xFF and header[1] & 0xE0 == 0xE0),
+        "audio/wav": header.startswith(b"RIFF") and header[8:12] == b"WAVE",
+        "audio/mp4": len(header) >= 12 and header[4:8] == b"ftyp",
+        "audio/aac": len(header) >= 2 and header[0] == 0xFF and header[1] & 0xF6 == 0xF0,
+    }
+    return checks.get(content_type, False)
 
 
 class PlazaConnectionManager:
     def __init__(self):
         self.connections: set[WebSocket] = set()
+        self.connections_by_ip: Counter[str] = Counter()
 
-    async def connect(self, websocket: WebSocket):
+    async def connect(self, websocket: WebSocket, ip: str) -> bool:
+        settings = get_settings()
+        if len(self.connections) >= settings.websocket_max_connections or self.connections_by_ip[ip] >= settings.websocket_max_connections_per_ip:
+            await websocket.close(code=1013, reason="Too many connections")
+            return False
         await websocket.accept()
         self.connections.add(websocket)
+        self.connections_by_ip[ip] += 1
+        return True
 
-    def disconnect(self, websocket: WebSocket):
-        self.connections.discard(websocket)
+    def disconnect(self, websocket: WebSocket, ip: str):
+        if websocket in self.connections:
+            self.connections.discard(websocket)
+            self.connections_by_ip[ip] -= 1
+            if self.connections_by_ip[ip] <= 0:
+                self.connections_by_ip.pop(ip, None)
 
     async def broadcast(self, payload: dict):
         stale: list[WebSocket] = []
@@ -48,16 +83,64 @@ class PlazaConnectionManager:
             except Exception:
                 stale.append(websocket)
         for websocket in stale:
-            self.disconnect(websocket)
+            ip = websocket.client.host if websocket.client else "unknown"
+            self.disconnect(websocket, ip)
 
 
 plaza_connections = PlazaConnectionManager()
 
 
-def _validate_media_urls(image_url: str, audio_url: str) -> None:
-    for value in (image_url, audio_url):
-        if value and not value.startswith("/uploads/community/"):
-            raise HTTPException(status_code=422, detail="媒体地址无效，请先通过上传接口提交文件")
+def _validate_media_urls(
+    db: Session,
+    user: User,
+    image_url: str,
+    audio_url: str,
+    *,
+    exclude_discussion_id: int | None = None,
+) -> None:
+    for value, expected_suffixes in ((image_url, IMAGE_SUFFIXES), (audio_url, AUDIO_SUFFIXES)):
+        if not value:
+            continue
+        prefix = "/uploads/community/"
+        filename = value.removeprefix(prefix)
+        match = UPLOAD_NAME_RE.fullmatch(filename) if value.startswith(prefix) else None
+        if not match or int(match.group("user_id")) != user.id or match.group("suffix") not in expected_suffixes:
+            raise HTTPException(status_code=422, detail="媒体地址无效或不属于当前用户")
+        if not (UPLOAD_ROOT / filename).is_file():
+            raise HTTPException(status_code=422, detail="媒体文件不存在")
+        discussion_query = db.query(Discussion).filter(
+            (Discussion.image_url == value) | (Discussion.audio_url == value)
+        )
+        if exclude_discussion_id is not None:
+            discussion_query = discussion_query.filter(Discussion.id != exclude_discussion_id)
+        in_plaza = db.query(PlazaMessage.id).filter(
+            (PlazaMessage.image_url == value) | (PlazaMessage.audio_url == value)
+        ).first()
+        if discussion_query.first() or in_plaza:
+            raise HTTPException(status_code=409, detail="媒体文件已被其他内容使用")
+
+
+def _remove_media(*urls: str) -> None:
+    for value in urls:
+        if value.startswith("/uploads/community/"):
+            path = UPLOAD_ROOT / value.rsplit("/", 1)[-1]
+            if path.parent == UPLOAD_ROOT and path.is_file():
+                path.unlink(missing_ok=True)
+
+
+def _cleanup_orphan_uploads(user_id: int, *, limit: int = 20) -> None:
+    cutoff = time.time() - 24 * 3600
+    checked = 0
+    with SyncSessionLocal() as db:
+        for path in UPLOAD_ROOT.iterdir():
+            if checked >= limit or not path.is_file() or not path.name.startswith(f"{user_id}-") or path.stat().st_mtime >= cutoff:
+                continue
+            checked += 1
+            url = f"/uploads/community/{path.name}"
+            used = db.query(Discussion.id).filter((Discussion.image_url == url) | (Discussion.audio_url == url)).first()
+            used = used or db.query(PlazaMessage.id).filter((PlazaMessage.image_url == url) | (PlazaMessage.audio_url == url)).first()
+            if not used:
+                path.unlink(missing_ok=True)
 
 
 def _plaza_out(message: PlazaMessage, author_name: str) -> dict:
@@ -108,6 +191,7 @@ def list_my_discussions(
 @router.post("/media")
 async def upload_community_media(
     file: UploadFile = File(...),
+    db: Session = Depends(get_sync_db),
     current_user: User = Depends(get_current_user),
 ):
     content_type = (file.content_type or "").split(";", 1)[0].strip().lower()
@@ -115,15 +199,30 @@ async def upload_community_media(
     if not media:
         raise HTTPException(status_code=415, detail="仅支持常见图片或音频格式")
     media_type, suffix, max_bytes = media
-    content = await file.read(max_bytes + 1)
-    await file.close()
-    if len(content) > max_bytes:
-        limit_mb = max_bytes // (1024 * 1024)
-        raise HTTPException(status_code=413, detail=f"文件不能超过 {limit_mb}MB")
-    if not content:
-        raise HTTPException(status_code=422, detail="不能上传空文件")
     filename = f"{current_user.id}-{uuid4().hex}{suffix}"
-    (UPLOAD_ROOT / filename).write_bytes(content)
+    destination = UPLOAD_ROOT / filename
+    temporary = destination.with_suffix(destination.suffix + ".part")
+    total = 0
+    header = b""
+    try:
+        with temporary.open("xb") as target:
+            while chunk := await file.read(64 * 1024):
+                if not header:
+                    header = chunk[:64]
+                    if not _valid_signature(content_type, header):
+                        raise HTTPException(status_code=415, detail="文件内容与声明的媒体格式不一致")
+                total += len(chunk)
+                if total > max_bytes:
+                    limit_mb = max_bytes // (1024 * 1024)
+                    raise HTTPException(status_code=413, detail=f"文件不能超过 {limit_mb}MB")
+                await asyncio.to_thread(target.write, chunk)
+        if not total:
+            raise HTTPException(status_code=422, detail="不能上传空文件")
+        temporary.replace(destination)
+    finally:
+        await file.close()
+        temporary.unlink(missing_ok=True)
+    await asyncio.to_thread(_cleanup_orphan_uploads, current_user.id)
     return {"url": f"/uploads/community/{filename}", "media_type": media_type}
 
 
@@ -149,7 +248,7 @@ async def create_plaza_message(
     db: Session = Depends(get_sync_db),
     current_user: User = Depends(get_current_user),
 ):
-    _validate_media_urls(payload.image_url, payload.audio_url)
+    _validate_media_urls(db, current_user, payload.image_url, payload.audio_url)
     moderation = moderate_content(db, payload.content)
     message = PlazaMessage(
         user_id=current_user.id,
@@ -170,14 +269,35 @@ async def create_plaza_message(
 
 @router.websocket("/plaza/ws")
 async def plaza_websocket(websocket: WebSocket):
-    await plaza_connections.connect(websocket)
+    ticket = websocket.query_params.get("ticket", "")
+    claims = decode_access_token(ticket)
+    if not claims or claims.get("type") != "websocket":
+        await websocket.close(code=1008, reason="Authentication required")
+        return
+    with SyncSessionLocal() as db:
+        user = db.query(User).filter(User.id == int(claims.get("user_id", 0))).first()
+        if not user or user.token_version != int(claims.get("ver", -1)):
+            await websocket.close(code=1008, reason="Authentication required")
+            return
+    ip = websocket.client.host if websocket.client else "unknown"
+    if not await plaza_connections.connect(websocket, ip):
+        return
     try:
         while True:
-            await websocket.receive_text()
+            await asyncio.wait_for(websocket.receive_text(), timeout=get_settings().websocket_idle_timeout_seconds)
     except WebSocketDisconnect:
-        plaza_connections.disconnect(websocket)
+        pass
+    except TimeoutError:
+        await websocket.close(code=1001)
     except Exception:
-        plaza_connections.disconnect(websocket)
+        await websocket.close(code=1011)
+    finally:
+        plaza_connections.disconnect(websocket, ip)
+
+
+@router.post("/plaza/ws-ticket")
+def create_plaza_ws_ticket(current_user: User = Depends(get_current_user)):
+    return {"ticket": create_websocket_token(user_id=current_user.id, token_version=current_user.token_version)}
 
 
 @router.get("/{discussion_id}", response_model=DiscussionOut)
@@ -201,7 +321,7 @@ def create_discussion(
     db: Session = Depends(get_sync_db),
     current_user: User = Depends(get_current_user),
 ):
-    _validate_media_urls(payload.image_url, payload.audio_url)
+    _validate_media_urls(db, current_user, payload.image_url, payload.audio_url)
     moderation = moderate_content(db, payload.title, payload.content)
     disc = Discussion(
         **payload.model_dump(exclude={"user_id"}),
@@ -227,7 +347,8 @@ def update_discussion(
         raise HTTPException(status_code=404, detail="讨论不存在")
     if obj.user_id != current_user.id and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="无权编辑该讨论")
-    _validate_media_urls(payload.image_url, payload.audio_url)
+    _validate_media_urls(db, current_user, payload.image_url, payload.audio_url, exclude_discussion_id=obj.id)
+    old_media = (obj.image_url, obj.audio_url)
     moderation = moderate_content(db, payload.title, payload.content)
     obj.title = payload.title
     obj.content = payload.content
@@ -239,6 +360,7 @@ def update_discussion(
     obj.moderation_reason = moderation.reason
     db.commit()
     db.refresh(obj)
+    _remove_media(*(url for url in old_media if url not in {obj.image_url, obj.audio_url}))
     return obj
 
 
@@ -257,6 +379,7 @@ def delete_discussion(
     db.query(Reply).filter(Reply.discussion_id == discussion_id).delete()
     db.delete(obj)
     db.commit()
+    _remove_media(obj.image_url, obj.audio_url)
     return {"ok": True}
 
 

@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from backend.services.risk_engine import RiskAssessment
 from backend.services.observability import RISK_CASES, RISK_OPEN, RISK_SLA_OVERDUE
+from backend.core.time import utc_now
 from database.models import Consultation, RiskAction, RiskEvent, UserNotification
 
 OPEN_STATUSES = {
@@ -38,7 +39,7 @@ class RiskOwnershipConflict(Exception):
 
 
 def due_at_for_level(level: str, now: datetime | None = None) -> datetime:
-    current = now or datetime.utcnow()
+    current = now or utc_now()
     if level in {"critical", "high"}:
         return current + timedelta(minutes=5)
     if level == "medium":
@@ -56,7 +57,7 @@ def create_or_escalate_case(
     event_type: str = "conversation",
     model_review: tuple[str, str] | None = None,
 ) -> RiskEvent:
-    merge_cutoff = datetime.utcnow() - timedelta(minutes=30)
+    merge_cutoff = utc_now() - timedelta(minutes=30)
     event = db.query(RiskEvent).filter(
         RiskEvent.user_id == user_id,
         RiskEvent.event_type == event_type,
@@ -171,10 +172,10 @@ def transition_case(
         raise InvalidRiskTransition(f"{event.status} -> {to_status}")
     if event.assigned_to and event.assigned_to != actor_id and to_status != "transferred":
         raise RiskOwnershipConflict
-    if to_status == "follow_up" and (not next_follow_up_at or next_follow_up_at <= datetime.utcnow()):
+    if to_status == "follow_up" and (not next_follow_up_at or next_follow_up_at <= utc_now()):
         raise InvalidRiskTransition("follow_up requires a future next_follow_up_at")
 
-    now = datetime.utcnow()
+    now = utc_now()
     updates: dict = {"status": to_status, "version": expected_version + 1}
     if to_status in {"assigned", "claimed"}:
         updates["assigned_to"] = assignee_id or actor_id
@@ -235,7 +236,7 @@ def transition_case(
 
 def scan_and_escalate_overdue(db: Session, now: datetime | None = None) -> int:
     """Append one SLA escalation record and notification per overdue case."""
-    current = now or datetime.utcnow()
+    current = now or utc_now()
     rows = db.query(RiskEvent).filter(
         RiskEvent.status.in_(OPEN_STATUSES),
         RiskEvent.due_at.isnot(None),

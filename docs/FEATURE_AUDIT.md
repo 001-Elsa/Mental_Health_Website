@@ -10,7 +10,7 @@
 | 风险识别 | 自伤关键词规则、连续情绪下降、DeepSeek 二次复核、案例合并、SLA、状态机、乐观锁、处置时间线和用户通知 | `/api/mood/risk-status`、`/api/admin/risk-events` | 首页提醒、支持进展、安全处置工作台 | `test_high_risk_*`、`test_risk_case_*` |
 | 运营后台 | DAU/WAU、平均情绪、咨询与风险趋势、RBAC、文章状态、举报、内容审核、敏感词管理 | `/api/admin/*` | 后台的“安全处置 / 运营管理”双视图 | `test_admin_routes_*`，管理员端页面验收 |
 | 社区治理 | 发布、回复、唯一点赞、举报、公开/私人可见性、敏感词过滤、待审核/发布/隐藏状态、越权保护 | `/api/discussions/*` | 社区互助页、我的发布、后台审核 | `test_community_*`、`test_private_discussion_*` |
-| 工程化 | JWT、RBAC、router/service/repository、幂等键、乐观锁、审计日志、统一错误、请求 ID、Redis、Alembic、Compose、CI、OpenAPI、压测 | `/api/health`、`/docs` | 全站 | CI、17 个后端测试、前端测试/构建、迁移与压测报告 |
+| 工程化 | HttpOnly Refresh Cookie、RBAC、router/service/repository、幂等键、乐观锁、审计日志、统一错误、请求 ID、Redis、Alembic、Compose、CI、OpenAPI、压测 | `/api/health`、`/docs` | 全站 | pytest、Vitest、Playwright、离线 Eval、迁移与原始样本压测报告 |
 
 ## 四个版本目标
 

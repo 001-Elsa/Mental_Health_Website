@@ -1,0 +1,23 @@
+﻿{
+    "schema_version":  "1.0",
+    "generated_at":  "2026-07-22T02:54:01.9280485Z",
+    "started_at":  "2026-07-22T02:53:11.4746355Z",
+    "docker_server":  "29.6.1",
+    "compose_project":  "mental-health-cache-benchmark",
+    "api_workers":  1,
+    "endpoint":  "/api/articles/?skip=0\u0026limit=20",
+    "stages":  [
+                   "01-redis-healthy.json",
+                   "02-outage-first-failure.json",
+                   "03-circuit-open.json"
+               ],
+    "recovery_health":  {
+                            "status":  "ok",
+                            "database":  "ok",
+                            "cache":  "redis"
+                        },
+    "docker_desktop_version":  "4.82.0",
+    "docker_desktop_install_location":  "C:\\Program Files\\Docker\\Docker",
+    "docker_data_vhd":  "D:\\Docker_Desktop\\docker-data\\wsl\\disk\\docker_data.vhdx",
+    "docker_data_vhd_bytes":  66138931200
+}

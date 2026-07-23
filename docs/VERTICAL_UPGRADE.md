@@ -67,7 +67,7 @@ docker compose up -d --build
 docker compose ps
 ```
 
-当前自动化覆盖 35 项后端测试和 1 项前端状态测试，包括并发领取、Refresh Token 轮换、SSE 持久化、缓存负值与指标暴露。
+当前自动化包含后端业务/安全/并发测试、AI 供应商故障注入、5 项前端单元测试、2 条 Playwright 核心链路，以及 11 条离线 AI/RAG 评测案例。覆盖并发领取、HttpOnly Refresh Cookie 轮换、SSE 持久化、缓存负值、指标暴露、RAG 拒答和隐私脱敏。
 
 ## 7. 当前边界
 

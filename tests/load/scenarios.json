@@ -1,0 +1,7 @@
+{
+  "version": "1.0",
+  "scenarios": [
+    {"name": "health", "endpoint": "/api/health", "requests": 400, "concurrency": 20, "warmup": 30},
+    {"name": "article-list", "endpoint": "/api/articles/?skip=0&limit=20", "requests": 1000, "concurrency": 50, "warmup": 50}
+  ]
+}

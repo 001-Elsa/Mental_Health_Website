@@ -34,16 +34,20 @@ PROTECTIVE_PATTERNS = ("不会伤害自己", "没有自杀想法", "只是难过
 
 def assess_risk(message: str, recent_mood_scores: list[float] | None = None) -> RiskAssessment:
     text = message.strip().lower()
+    protective_matches = [pattern for pattern in PROTECTIVE_PATTERNS if pattern in text]
+    signal_text = text
+    for pattern in protective_matches:
+        signal_text = signal_text.replace(pattern, "")
     score = 0
     signals: list[str] = []
 
     for label, patterns in CRITICAL_PATTERNS.items():
-        if any(pattern in text for pattern in patterns):
-            score += 45 if label == "近期行动计划" else 35
+        if any(pattern in signal_text for pattern in patterns):
+            score += 45 if label in {"近期行动计划", "明确自杀意图"} else 35
             signals.append(label)
 
     for label, patterns in DISTRESS_PATTERNS.items():
-        if any(pattern in text for pattern in patterns):
+        if any(pattern in signal_text for pattern in patterns):
             score += 15
             signals.append(label)
 
@@ -57,7 +61,7 @@ def assess_risk(message: str, recent_mood_scores: list[float] | None = None) -> 
         score += 10
         signals.append("近期情绪评分很低")
 
-    if any(pattern in text for pattern in PROTECTIVE_PATTERNS):
+    if protective_matches:
         score = max(0, score - 20)
         signals.append("包含保护性表达")
 

@@ -7,10 +7,11 @@ import {
   MessageCircleMore,
   ShieldCheck,
 } from "lucide-react";
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import AuthPanel from "./components/AuthPanel";
 import { useAuthStore } from "./store/auth";
+import { bootstrapAuth } from "./api/client";
 
 const AdminPage = lazy(() => import("./pages/AdminPage"));
 const ArticlesPage = lazy(() => import("./pages/ArticlesPage"));
@@ -43,6 +44,9 @@ const pageTitles: Record<string, { title: string; subtitle: string }> = {
 export default function App() {
   const location = useLocation();
   const role = useAuthStore((state) => state.user?.role);
+  const initialized = useAuthStore((state) => state.initialized);
+  useEffect(() => { void bootstrapAuth(); }, []);
+  if (!initialized) return <div className="page-loading">正在恢复安全会话...</div>;
   const isAdmin = role === "admin";
   const meta = pageTitles[location.pathname] ?? pageTitles["/dashboard"];
 

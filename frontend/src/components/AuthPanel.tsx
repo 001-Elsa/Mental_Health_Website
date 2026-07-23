@@ -25,13 +25,13 @@ export default function AuthPanel() {
   const [mode, setMode] = useState<"login" | "register" | null>(null);
   const [codeHint, setCodeHint] = useState("");
 
-  const loginForm = useForm<LoginForm>({ resolver: zodResolver(loginSchema), defaultValues: { nickname: "测试用户1", password: "123456" } });
+  const loginForm = useForm<LoginForm>({ resolver: zodResolver(loginSchema), defaultValues: { nickname: "", password: "" } });
   const registerForm = useForm<RegisterForm>({ resolver: zodResolver(registerSchema) });
 
   const login = useMutation({
     mutationFn: authApi.login,
     onSuccess: (data) => {
-      setAuth(data.token, data.user, data.refresh_token);
+      setAuth(data.token, data.user);
       setMode(null);
     },
   });

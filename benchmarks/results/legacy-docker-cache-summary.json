@@ -1,0 +1,12 @@
+{
+  "schema_version": "legacy-summary-1.0",
+  "recorded_at": "2026-07-18",
+  "provenance": "Values preserved from docs/PERFORMANCE.md before raw-sample capture was introduced. Re-run scripts/benchmark-cache-failure.ps1 to produce auditable samples.",
+  "environment": "Windows Docker Desktop, PostgreSQL 16, Redis 7, four Uvicorn workers",
+  "scenarios": [
+    {"name": "article-list", "requests": 1000, "concurrency": 50, "qps": 101.95, "p95_ms": 1412, "success_rate": 1.0},
+    {"name": "redis-outage-before-circuit", "requests": 400, "concurrency": 20, "qps": 7.52, "p95_ms": 4068, "success_rate": 1.0},
+    {"name": "redis-outage-circuit-open", "requests": 400, "concurrency": 20, "qps": 62.69, "p95_ms": 799, "success_rate": 1.0}
+  ],
+  "limitations": ["No per-request samples were retained for this historical run", "Not a production capacity claim"]
+}

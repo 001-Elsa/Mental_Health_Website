@@ -6,6 +6,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from backend.auth import require_admin
+from backend.core.time import utc_now
 from backend.services.audit import record_audit
 from backend.services.article_service import invalidate_articles
 from backend.services.risk_cases import (
@@ -63,8 +64,8 @@ def overview(
     db: Session = Depends(get_sync_db),
     current_user: User = Depends(require_admin),
 ):
-    seven_days_ago = datetime.utcnow() - timedelta(days=7)
-    one_day_ago = datetime.utcnow() - timedelta(days=1)
+    seven_days_ago = utc_now() - timedelta(days=7)
+    one_day_ago = utc_now() - timedelta(days=1)
     active_mood_users = {
         row[0]
         for row in db.query(MoodLog.user_id).filter(MoodLog.created_at >= seven_days_ago).distinct().all()
@@ -90,7 +91,7 @@ def overview(
         "overdue_risks": db.query(func.count(RiskEvent.id)).filter(
             RiskEvent.status.in_(OPEN_STATUSES),
             RiskEvent.due_at.isnot(None),
-            RiskEvent.due_at < datetime.utcnow(),
+            RiskEvent.due_at < utc_now(),
         ).scalar() or 0,
         "pending_reports": db.query(func.count(Report.id)).filter(Report.status == "pending").scalar() or 0,
         "pending_content": db.query(func.count(Discussion.id)).filter(Discussion.status == "pending_review").scalar() or 0,
@@ -105,7 +106,7 @@ def operation_trends(
     db: Session = Depends(get_sync_db),
     current_user: User = Depends(require_admin),
 ):
-    cutoff = datetime.utcnow().date() - timedelta(days=days - 1)
+    cutoff = utc_now().date() - timedelta(days=days - 1)
     mood_rows = db.query(
         func.date(MoodLog.created_at).label("date"),
         func.round(func.avg(MoodLog.score), 1).label("avg_mood"),
@@ -162,7 +163,7 @@ def risk_events(
             "assigned_to": row.assigned_to,
             "assignee_name": users.get(row.assigned_to).nickname if users.get(row.assigned_to) else "",
             "due_at": row.due_at,
-            "overdue": bool(row.due_at and row.due_at < datetime.utcnow() and row.status in OPEN_STATUSES),
+            "overdue": bool(row.due_at and row.due_at < utc_now() and row.status in OPEN_STATUSES),
             "next_follow_up_at": row.next_follow_up_at,
             "version": row.version,
             "event_type": row.event_type,
@@ -350,7 +351,7 @@ def handle_report(
                 discussion.moderation_reason = ""
     report.status = "resolved" if payload.action != "dismiss" else "dismissed"
     report.handled_by = current_user.id
-    report.handled_at = datetime.utcnow()
+    report.handled_at = utc_now()
     record_audit(
         db,
         actor_id=current_user.id,

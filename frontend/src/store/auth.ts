@@ -1,49 +1,29 @@
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
 import type { User } from "../types";
 
 type AuthState = {
   token: string | null;
-  refreshToken: string | null;
   user: User | null;
-  setAuth: (token: string, user: User, refreshToken?: string) => void;
-  setTokens: (token: string, refreshToken: string) => void;
+  initialized: boolean;
+  setAuth: (token: string, user: User) => void;
+  setToken: (token: string) => void;
+  setInitialized: (initialized: boolean) => void;
   setUser: (user: User) => void;
   logout: () => void;
 };
 
 export const useAuthStore = create<AuthState>()(
-  persist(
-    (set, get) => ({
+    (set) => ({
       token: null,
-      refreshToken: null,
       user: null,
-      setAuth: (token, user, refreshToken) => set({ token, user, refreshToken: refreshToken ?? null }),
-      setTokens: (token, refreshToken) => set({ token, refreshToken }),
+      initialized: false,
+      setAuth: (token, user) => set({ token, user, initialized: true }),
+      setToken: (token) => set({ token }),
+      setInitialized: (initialized) => set({ initialized }),
       setUser: (user) => set({ user }),
       logout: () => {
-        const refreshToken = get().refreshToken;
-        if (refreshToken) {
-          void fetch("/api/auth/logout", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ refresh_token: refreshToken }),
-          });
-        }
-        set({ token: null, refreshToken: null, user: null });
+        void fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" }).catch(() => undefined);
+        set({ token: null, user: null, initialized: true });
       },
     }),
-    {
-      name: "mh-auth",
-      storage: createJSONStorage(() =>
-        typeof localStorage === "undefined"
-          ? {
-              getItem: () => null,
-              setItem: () => undefined,
-              removeItem: () => undefined,
-            }
-          : localStorage,
-      ),
-    },
-  ),
 );

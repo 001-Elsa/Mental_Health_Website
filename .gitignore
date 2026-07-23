@@ -16,3 +16,7 @@ frontend/.vite/
 logs/
 codes/
 *.zip
+benchmarks/results/cache-failure-*/
+benchmarks/results/latest.json
+test-results/
+playwright-report/

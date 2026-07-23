@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.config import get_settings
+from backend.core.time import utc_now
 from database.database import get_async_db, get_sync_db
 from database.models import User
 
@@ -33,7 +34,7 @@ def verify_password(plain: str, hashed: str) -> bool:
 def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
     settings = get_settings()
     to_encode = data.copy()
-    expire = datetime.utcnow() + (
+    expire = utc_now() + (
         expires_delta or timedelta(minutes=settings.access_token_expire_minutes)
     )
     to_encode.update({"exp": expire, "type": "access", "jti": uuid4().hex})
@@ -42,7 +43,7 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
 
 def create_refresh_token(*, user_id: int, token_version: int) -> tuple[str, datetime]:
     settings = get_settings()
-    expires_at = datetime.utcnow() + timedelta(days=settings.refresh_token_expire_days)
+    expires_at = utc_now() + timedelta(days=settings.refresh_token_expire_days)
     payload = {
         "user_id": user_id,
         "ver": token_version,
@@ -51,6 +52,17 @@ def create_refresh_token(*, user_id: int, token_version: int) -> tuple[str, date
         "exp": expires_at,
     }
     return jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM), expires_at
+
+
+def create_websocket_token(*, user_id: int, token_version: int) -> str:
+    payload = {
+        "user_id": user_id,
+        "ver": token_version,
+        "type": "websocket",
+        "jti": uuid4().hex,
+        "exp": utc_now() + timedelta(seconds=60),
+    }
+    return jwt.encode(payload, get_settings().secret_key, algorithm=ALGORITHM)
 
 
 def decode_access_token(token: str) -> dict | None:

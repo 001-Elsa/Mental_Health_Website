@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from itertools import count
 from pathlib import Path
 from uuid import uuid4
+import pytest
 
 # Developers can run this file without any infrastructure.  CI supplies a
 # PostgreSQL URL and Redis URL, which must take precedence so the production
@@ -19,6 +20,7 @@ os.environ.setdefault("SECRET_KEY", "test-secret")
 os.environ.setdefault("DEEPSEEK_API_KEY", "")
 
 from fastapi.testclient import TestClient  # noqa: E402
+from starlette.websockets import WebSocketDisconnect  # noqa: E402
 
 from backend.main import app  # noqa: E402
 from database.database import init_db  # noqa: E402
@@ -42,6 +44,8 @@ from backend.services import article_service  # noqa: E402
 from backend.services.cache import CacheService  # noqa: E402
 from backend.services.risk_cases import RiskVersionConflict, claim_case  # noqa: E402
 from backend.services.rag import retrieve_conversation_context  # noqa: E402
+from backend.core.config import Settings  # noqa: E402
+from backend.core.time import utc_now  # noqa: E402
 
 
 init_db()
@@ -105,16 +109,34 @@ def test_refresh_token_rotates_and_logout_revokes_it():
     )
     login = client.post("/api/auth/login", json={"nickname": nickname, "password": "12345678"})
     assert login.status_code == 200
-    first_refresh = login.json()["refresh_token"]
-    rotated = client.post("/api/auth/refresh", json={"refresh_token": first_refresh})
+    assert "refresh_token" not in login.json()
+    first_refresh = login.cookies.get("mh_refresh")
+    assert first_refresh and "HttpOnly" in login.headers["set-cookie"]
+    rotated = client.post("/api/auth/refresh")
     assert rotated.status_code == 200
-    assert rotated.json()["refresh_token"] != first_refresh
-    assert client.post("/api/auth/refresh", json={"refresh_token": first_refresh}).status_code == 401
+    second_refresh = rotated.cookies.get("mh_refresh")
+    assert second_refresh and second_refresh != first_refresh
+    probe = TestClient(app)
+    assert probe.post("/api/auth/refresh", json={"refresh_token": first_refresh}).status_code == 401
     access = rotated.json()["token"]
     assert client.get("/api/users/me", headers={"Authorization": f"Bearer {access}"}).status_code == 200
-    second_refresh = rotated.json()["refresh_token"]
-    assert client.post("/api/auth/logout", json={"refresh_token": second_refresh}).status_code == 200
-    assert client.post("/api/auth/refresh", json={"refresh_token": second_refresh}).status_code == 401
+    assert client.post("/api/auth/logout").status_code == 200
+    assert probe.post("/api/auth/refresh", json={"refresh_token": second_refresh}).status_code == 401
+
+
+def test_request_id_rejects_log_injection_and_accepts_safe_values():
+    unsafe = client.get("/api/health", headers={"X-Request-ID": "bad\r\nforged-log"})
+    assert unsafe.status_code == 200
+    assert unsafe.headers["X-Request-ID"] != "bad\r\nforged-log"
+    safe = client.get("/api/health", headers={"X-Request-ID": "frontend-123.safe"})
+    assert safe.headers["X-Request-ID"] == "frontend-123.safe"
+
+
+def test_production_rejects_the_default_signing_key(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("SECRET_KEY", "change-me-in-production")
+    with pytest.raises(RuntimeError, match="SECRET_KEY"):
+        Settings()
 
 
 def test_user_mode_analytics_are_personal_and_all_user_trends_are_admin_only():
@@ -722,7 +744,7 @@ def test_twenty_concurrent_claims_have_exactly_one_winner():
             score=80,
             status="pending",
             version=0,
-            due_at=datetime.utcnow() + timedelta(minutes=5),
+            due_at=utc_now() + timedelta(minutes=5),
         )
         db.add(event)
         db.commit()
@@ -853,6 +875,13 @@ def test_community_media_upload_and_media_only_share():
     assert created.json()["image_url"] == media["url"]
     assert client.get(media["url"]).status_code == 200
 
+    reused = client.post(
+        "/api/discussions/plaza",
+        json={"content": "重复引用", "image_url": media["url"]},
+        headers=headers,
+    )
+    assert reused.status_code == 409
+
     upload_path = Path(media["url"].lstrip("/"))
     if upload_path.exists():
         upload_path.unlink()
@@ -873,6 +902,18 @@ def test_realtime_plaza_persists_messages_and_requires_login():
     assert any(item["id"] == message["id"] and item["content"] == payload["content"] for item in public_messages)
 
 
+def test_realtime_plaza_websocket_requires_a_short_lived_ticket():
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect("/api/discussions/plaza/ws"):
+            pass
+
+    headers = auth_headers()
+    ticket = client.post("/api/discussions/plaza/ws-ticket", headers=headers)
+    assert ticket.status_code == 200
+    with client.websocket_connect(f"/api/discussions/plaza/ws?ticket={ticket.json()['ticket']}") as websocket:
+        websocket.send_text("ping")
+
+
 def test_community_rejects_unmanaged_media_urls():
     response = client.post(
         "/api/discussions/plaza",
@@ -880,6 +921,32 @@ def test_community_rejects_unmanaged_media_urls():
         headers=auth_headers(),
     )
     assert response.status_code == 422
+
+
+def test_community_rejects_spoofed_media_and_cross_user_reference():
+    owner = auth_headers()
+    other = auth_headers()
+    spoofed = client.post(
+        "/api/discussions/media",
+        files={"file": ("fake.png", b"this is not a png", "image/png")},
+        headers=owner,
+    )
+    assert spoofed.status_code == 415
+    uploaded = client.post(
+        "/api/discussions/media",
+        files={"file": ("owned.png", b"\x89PNG\r\n\x1a\nowned", "image/png")},
+        headers=owner,
+    )
+    assert uploaded.status_code == 200
+    cross_user = client.post(
+        "/api/discussions/plaza",
+        json={"content": "不能借用他人媒体", "image_url": uploaded.json()["url"]},
+        headers=other,
+    )
+    assert cross_user.status_code == 422
+    upload_path = Path(uploaded.json()["url"].lstrip("/"))
+    if upload_path.exists():
+        upload_path.unlink()
 
 
 def test_profile_center_updates_media_contacts_and_password():

@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session, aliased
 
 from backend.auth import get_current_user, get_current_user_async
+from backend.core.time import utc_now
 from backend.services.ai_client import ai_client
 from backend.services.cache import cache_service
 from backend.services.conversation_memory import compress_history
@@ -120,7 +121,7 @@ async def chat(
         db.add(consult)
         db.flush()
 
-    now = datetime.utcnow()
+    now = utc_now()
     consult.emotion_tag = infer_emotion(message)
     consult.last_message_at = now
     consult.risk_score = max(consult.risk_score or 0, assessment.score)
@@ -220,7 +221,7 @@ def _persist_streamed_chat_sync(
         ).order_by(ChatMessage.created_at.asc(), ChatMessage.id.asc()).all()
     rank = {"low": 0, "medium": 1, "high": 2, "critical": 3}
     consult.emotion_tag = infer_emotion(message)
-    consult.last_message_at = datetime.utcnow()
+    consult.last_message_at = utc_now()
     consult.risk_score = max(consult.risk_score or 0, assessment.score)
     if rank[assessment.level] >= rank.get(consult.risk_level, 0):
         consult.risk_level = assessment.level

@@ -27,6 +27,12 @@ class Settings:
         self.app_name = os.getenv("APP_NAME", "心理健康AI助手")
         self.environment = os.getenv("APP_ENV", "development")
         self.secret_key = os.getenv("SECRET_KEY", "mental-health-ai-secret-key-change-in-production")
+        if self.environment == "production" and self.secret_key in {
+            "",
+            "change-me-in-production",
+            "mental-health-ai-secret-key-change-in-production",
+        }:
+            raise RuntimeError("Production requires a unique SECRET_KEY")
         self.access_token_expire_minutes = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15"))
         self.refresh_token_expire_days = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "30"))
         self.database_url = os.getenv("DATABASE_URL", "sqlite:///./mental_health_v2.db")
@@ -45,6 +51,13 @@ class Settings:
         self.sms_sign_name = os.getenv("SMS_SIGN_NAME", "心灵伙伴")
         self.email_webhook_url = os.getenv("EMAIL_WEBHOOK_URL", "")
         self.email_webhook_token = os.getenv("EMAIL_WEBHOOK_TOKEN", "")
+        self.metrics_token = os.getenv("METRICS_TOKEN", "")
+        if self.metrics_token == "replace-with-a-separate-random-token":
+            self.metrics_token = ""
+        self.request_timeout_seconds = float(os.getenv("REQUEST_TIMEOUT_SECONDS", "20"))
+        self.websocket_max_connections = int(os.getenv("WEBSOCKET_MAX_CONNECTIONS", "200"))
+        self.websocket_max_connections_per_ip = int(os.getenv("WEBSOCKET_MAX_CONNECTIONS_PER_IP", "5"))
+        self.websocket_idle_timeout_seconds = int(os.getenv("WEBSOCKET_IDLE_TIMEOUT_SECONDS", "45"))
         self.cors_origins = [
             item.strip()
             for item in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")

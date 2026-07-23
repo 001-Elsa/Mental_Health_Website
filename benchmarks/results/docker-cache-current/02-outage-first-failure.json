@@ -1,0 +1,39 @@
+{
+  "schema_version": "1.0",
+  "label": "redis-outage-first-failure",
+  "generated_at": "2026-07-22T02:53:51.072230+00:00",
+  "environment": {
+    "git_revision": "50a2b80",
+    "platform": "Windows-10-10.0.19045-SP0",
+    "python": "3.10.11",
+    "processor": "unknown"
+  },
+  "config": {
+    "base_url": "http://127.0.0.1:8000",
+    "endpoint": "/api/articles/?skip=0&limit=20",
+    "concurrency": 1,
+    "requests": 1,
+    "warmup": 0,
+    "timeout_seconds": 10.0,
+    "label": "redis-outage-first-failure"
+  },
+  "summary": {
+    "duration_seconds": 4.044,
+    "requests_per_second": 0.25,
+    "success_rate": 1.0,
+    "status_counts": {
+      "200": 1
+    },
+    "errors": {},
+    "latency_ms": {
+      "mean": 4044.2,
+      "p50": 4044.2,
+      "p95": 4044.2,
+      "p99": 4044.2,
+      "max": 4044.2
+    }
+  },
+  "latency_samples_ms": [
+    4044.196
+  ]
+}
