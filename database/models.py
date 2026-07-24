@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, Index, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, Float, Index, Integer, String, Text, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database.database import Base
@@ -217,6 +217,18 @@ class RiskEvent(Base):
 
 class RiskAction(Base):
     __tablename__ = "risk_actions"
+    __table_args__ = (
+        # A case can cross an SLA boundary only once.  The partial index keeps
+        # normal timeline actions repeatable while making multiple SLA workers
+        # safe to run concurrently.
+        Index(
+            "uq_risk_actions_sla_escalation",
+            "risk_event_id",
+            unique=True,
+            sqlite_where=text("action = 'sla_escalated'"),
+            postgresql_where=text("action = 'sla_escalated'"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     risk_event_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
@@ -253,6 +265,7 @@ class IdempotencyRecord(Base):
     user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     operation: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     idempotency_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     status: Mapped[str] = mapped_column(String(24), default="processing", index=True)
     response_json: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

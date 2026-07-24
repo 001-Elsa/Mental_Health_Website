@@ -6,6 +6,8 @@
 
 ## 上公网前的必做项
 
+生产部署使用 `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build`。生产覆盖层会移除 PostgreSQL、Redis、Prometheus 和 Grafana 的宿主机端口映射，并要求提供数据库、Redis、Grafana、JWT 和指标密钥；HTTPS 终止应由部署环境中的反向代理或负载均衡器完成。
+
 1. 复制 `.env.example` 为 `.env`，用强随机值替换 `SECRET_KEY`、`POSTGRES_PASSWORD`、`GRAFANA_ADMIN_PASSWORD`，并按需修改管理员用户名。
 2. 通过反向代理启用 HTTPS，限制 `CORS_ORIGINS` 为实际前端域名，且不要公开 PostgreSQL、Redis、Prometheus 的端口。
 3. 在受控密钥服务或部署平台的 Secret 中保存 DeepSeek 与通知 Webhook 密钥，禁止提交 `.env`。

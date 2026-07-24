@@ -14,7 +14,13 @@ from backend.core.time import utc_now
 from backend.services.ai_client import ai_client
 from backend.services.cache import cache_service
 from backend.services.conversation_memory import compress_history
-from backend.services.idempotency import IdempotencyInProgress, begin_operation, complete_operation
+from backend.services.idempotency import (
+    IdempotencyInProgress,
+    IdempotencyKeyReuse,
+    begin_operation,
+    complete_operation,
+    fingerprint_request,
+)
 from backend.services.risk_engine import RiskAssessment, assess_risk, infer_emotion
 from backend.services.risk_cases import create_or_escalate_case
 from backend.services.user_profile import recommend_exercises, update_user_profile
@@ -59,7 +65,10 @@ async def chat(
                 user_id=current_user.id,
                 operation="consult.chat",
                 key=payload.request_key,
+                request_fingerprint=fingerprint_request(payload.model_dump()),
             )
+        except IdempotencyKeyReuse as exc:
+            raise HTTPException(status_code=409, detail="幂等键不能用于不同的请求内容") from exc
         except IdempotencyInProgress as exc:
             raise HTTPException(status_code=409, detail="相同请求正在处理中，请稍后重试") from exc
         if cached_response is not None:

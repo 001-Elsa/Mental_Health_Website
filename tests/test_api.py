@@ -636,6 +636,33 @@ def test_chat_idempotency_returns_same_result_without_duplicate_messages():
         assert db.query(ChatMessage).filter(ChatMessage.conversation_id == conversation_id).count() == 2
 
 
+def test_chat_rejects_reusing_an_idempotency_key_for_different_content():
+    headers = auth_headers()
+    request_key = f"conflict-{uuid4().hex}"
+    first = client.post(
+        "/api/consult/chat",
+        json={
+            "conversation_id": f"idem-conflict-{uuid4().hex[:8]}",
+            "request_key": request_key,
+            "message": "最近考试压力很大。",
+            "visibility": "私人",
+        },
+        headers=headers,
+    )
+    assert first.status_code == 200
+    second = client.post(
+        "/api/consult/chat",
+        json={
+            "conversation_id": f"idem-conflict-{uuid4().hex[:8]}",
+            "request_key": request_key,
+            "message": "我想改成另一条完全不同的消息。",
+            "visibility": "私人",
+        },
+        headers=headers,
+    )
+    assert second.status_code == 409
+
+
 def test_repeated_high_risk_messages_escalate_one_open_case():
     headers = auth_headers()
     conversation_id = f"case-{uuid4().hex[:12]}"

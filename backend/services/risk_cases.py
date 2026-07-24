@@ -1,11 +1,12 @@
 from datetime import datetime, timedelta
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend.services.risk_engine import RiskAssessment
 from backend.services.observability import RISK_CASES, RISK_OPEN, RISK_SLA_OVERDUE
 from backend.core.time import utc_now
-from database.models import Consultation, RiskAction, RiskEvent, UserNotification
+from database.models import Consultation, RiskAction, RiskEvent, User, UserNotification
 
 OPEN_STATUSES = {
     "pending", "claimed", "processing", "waiting", "transferred",
@@ -47,6 +48,12 @@ def due_at_for_level(level: str, now: datetime | None = None) -> datetime:
     return current + timedelta(hours=24)
 
 
+def _fallback_sla_operator(db: Session) -> int | None:
+    """Return an operations user for unassigned SLA reminders, if available."""
+    row = db.query(User.id).filter(User.role == "admin").order_by(User.id.asc()).first()
+    return int(row[0]) if row else None
+
+
 def create_or_escalate_case(
     db: Session,
     *,
@@ -57,6 +64,10 @@ def create_or_escalate_case(
     event_type: str = "conversation",
     model_review: tuple[str, str] | None = None,
 ) -> RiskEvent:
+    # PostgreSQL serializes case creation per user while allowing unrelated
+    # users to proceed concurrently.  This closes the read-then-insert race.
+    if db.bind and db.bind.dialect.name == "postgresql":
+        db.query(User.id).filter(User.id == user_id).with_for_update().one()
     merge_cutoff = utc_now() - timedelta(minutes=30)
     event = db.query(RiskEvent).filter(
         RiskEvent.user_id == user_id,
@@ -250,6 +261,7 @@ def scan_and_escalate_overdue(db: Session, now: datetime | None = None) -> int:
         ).first()
         if already_recorded:
             continue
+        savepoint = db.begin_nested()
         db.add(RiskAction(
             risk_event_id=event.id,
             action="sla_escalated",
@@ -257,10 +269,19 @@ def scan_and_escalate_overdue(db: Session, now: datetime | None = None) -> int:
             to_status=event.status,
             note=f"案例超过 {event.level} 级别处置时限",
         ))
+        try:
+            db.flush()
+        except IntegrityError:
+            savepoint.rollback()
+            continue
+        else:
+            savepoint.commit()
         event.score = min(100, event.score + 5)
         event.version += 1
         db.add(UserNotification(
-            user_id=event.assigned_to or event.user_id,
+            # A missing operator is intentionally not replaced by the student.
+            # User id 0 is an unassigned operational inbox, not a user account.
+            user_id=event.assigned_to or _fallback_sla_operator(db) or 0,
             notification_type="risk_sla",
             title="风险案例已超过 SLA",
             content=f"案例 #{event.id} 已超过响应时限，请立即处理。",
